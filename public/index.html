@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Private Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: #fff; min-height: 100vh;
+    }
+
+    /* Screens */
+    .screen { display: none; position: fixed; inset: 0; }
+    .screen.active { display: flex; flex-direction: column; }
+
+    /* Join Screen */
+    #joinScreen { align-items: center; justify-content: center; }
+    .join-box { text-align: center; padding: 20px; width: 100%; max-width: 320px; }
+    .join-box h1 { font-size: 3rem; margin-bottom: 20px; }
+    .join-box input {
+      width: 100%; padding: 15px; margin-bottom: 12px;
+      border: 2px solid rgba(255,255,255,0.1); border-radius: 12px;
+      background: rgba(255,255,255,0.1); color: #fff; font-size: 16px;
+    }
+    .join-box input:focus { outline: none; border-color: #e94560; }
+    .join-box input::placeholder { color: #888; }
+    .join-box button {
+      width: 100%; padding: 15px; border: none; border-radius: 12px;
+      background: linear-gradient(135deg, #e94560, #ff6b6b);
+      color: #fff; font-size: 16px; font-weight: bold; cursor: pointer;
+    }
+
+    /* Chat Screen */
+    #chatScreen { background: #1a1a2e; }
+    .chat-header {
+      padding: 15px; background: rgba(0,0,0,0.5);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .chat-header h2 { font-size: 16px; }
+    .chat-header .info { color: #4ade80; font-size: 13px; cursor: pointer; }
+    .leave-btn {
+      background: #ef4444; border: none; color: #fff;
+      padding: 8px 15px; border-radius: 8px; cursor: pointer;
+    }
+
+    .messages {
+      flex: 1; overflow-y: auto; padding: 15px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .msg { max-width: 80%; padding: 10px 14px; border-radius: 15px; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
+    .msg.mine { align-self: flex-end; background: linear-gradient(135deg, #e94560, #ff6b6b); border-bottom-right-radius: 4px; }
+    .msg.other { align-self: flex-start; background: rgba(255,255,255,0.1); border-bottom-left-radius: 4px; }
+    .msg .sender { font-size: 11px; color: #ffd700; margin-bottom: 4px; }
+    .msg .text { font-size: 15px; word-break: break-word; }
+    .msg .text img { max-width: 200px; border-radius: 8px; margin-top: 5px; cursor: pointer; }
+    
+    /* Message Meta with Ticks */
+    .msg .meta { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 5px; }
+    .msg .time { font-size: 10px; color: rgba(255,255,255,0.5); }
+    .msg .ticks { font-size: 14px; font-weight: bold; color: rgba(255,255,255,0.5); transition: color 0.3s; }
+    .msg .ticks.seen { color: #4ade80; }
+    
+    .msg.sys { align-self: center; background: rgba(255,255,255,0.05); color: #888; font-size: 12px; }
+
+    /* Typing Indicator */
+    .typing-indicator { 
+      padding: 5px 15px; min-height: 24px;
+      font-size: 13px; color: #888; font-style: italic;
+    }
+    .typing-indicator .dots::after {
+      content: '';
+      animation: typingDots 1.4s infinite;
+    }
+    @keyframes typingDots {
+      0%, 20% { content: '.'; }
+      40% { content: '..'; }
+      60%, 100% { content: '...'; }
+    }
+
+    .chat-input {
+      padding: 12px; background: rgba(0,0,0,0.5);
+      display: flex; gap: 10px; align-items: center;
+    }
+    .chat-input input {
+      flex: 1; padding: 12px 16px; border: none; border-radius: 25px;
+      background: rgba(255,255,255,0.1); color: #fff; font-size: 16px;
+    }
+    .chat-input input:focus { outline: none; }
+    .chat-input input::placeholder { color: #666; }
+    .chat-input button {
+      width: 45px; height: 45px; border: none; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    .img-btn { background: rgba(255,255,255,0.2); color: #fff; font-size: 20px; }
+    .send-btn { background: #e94560; color: #fff; font-size: 18px; }
+
+    /* User Modal */
+    .modal { 
+      position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .modal.show { display: flex; }
+    .modal-content {
+      background: #252547; border-radius: 16px; padding: 20px;
+      width: 90%; max-width: 350px; max-height: 70%; overflow-y: auto;
+    }
+    .modal-content h3 { text-align: center; margin-bottom: 15px; }
+    .user-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px; background: rgba(255,255,255,0.05); border-radius: 10px; margin-bottom: 10px;
+    }
+    .user-item .name { font-size: 15px; }
+    .user-item.me .name { color: #888; }
+    .call-btn {
+      background: #22c55e; border: none; color: #fff;
+      padding: 8px 16px; border-radius: 20px; font-size: 13px; cursor: pointer;
+    }
+    .close-btn {
+      width: 100%; padding: 12px; margin-top: 10px;
+      background: #444; border: none; border-radius: 10px; color: #fff; cursor: pointer;
+    }
+
+    /* Image Preview Modal */
+    .preview-modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.95);
+      display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
+    }
+    .preview-modal.show { display: flex; }
+    .preview-modal img { max-width: 90%; max-height: 60%; border-radius: 10px; }
+    .preview-modal .btns { display: flex; gap: 15px; margin-top: 20px; }
+    .preview-modal button { padding: 12px 30px; border: none; border-radius: 25px; font-size: 16px; cursor: pointer; }
+    .preview-modal .cancel { background: #444; color: #fff; }
+    .preview-modal .send { background: #e94560; color: #fff; }
+
+    /* Full Image Modal */
+    .fullimg-modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.98);
+      display: none; align-items: center; justify-content: center; z-index: 150;
+    }
+    .fullimg-modal.show { display: flex; }
+    .fullimg-modal img { max-width: 95%; max-height: 90%; object-fit: contain; }
+    .fullimg-modal .close-full {
+      position: absolute; top: 20px; right: 20px;
+      background: rgba(255,255,255,0.2); border: none; color: #fff;
+      width: 40px; height: 40px; border-radius: 50%; font-size: 24px; cursor: pointer;
+    }
+
+    /* Call Screen */
+    #callScreen { background: #000; z-index: 200; }
+    .video-container { flex: 1; position: relative; }
+    #remoteVideo { width: 100%; height: 100%; object-fit: contain; background: #111; }
+    #localVideo {
+      position: absolute; top: 20px; right: 20px;
+      width: 100px; height: 140px; object-fit: cover;
+      border-radius: 10px; border: 2px solid #fff; background: #333;
+    }
+    .call-status {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; background: rgba(0,0,0,0.8); padding: 30px; border-radius: 15px;
+    }
+    .call-status .spinner {
+      width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #e94560; border-radius: 50%;
+      animation: spin 1s linear infinite; margin: 0 auto 15px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .call-info {
+      position: absolute; top: 15px; left: 15px;
+      background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    }
+    .call-controls {
+      display: flex; justify-content: center; gap: 20px; padding: 25px; background: rgba(0,0,0,0.8);
+    }
+    .ctrl-btn {
+      width: 55px; height: 55px; border-radius: 50%; border: none;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 22px;
+    }
+    .ctrl-btn.end { background: #ef4444; }
+    .ctrl-btn.mic { background: #3b82f6; }
+    .ctrl-btn.cam { background: #3b82f6; }
+    .ctrl-btn.flip { background: #8b5cf6; }
+    .ctrl-btn.off { background: #666; }
+
+    /* Incoming Call */
+    .incoming-modal {
+      position: fixed; inset: 0; background: linear-gradient(135deg, #1a1a2e, #16213e);
+      display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 300;
+    }
+    .incoming-modal.show { display: flex; }
+    .incoming-modal .avatar {
+      width: 100px; height: 100px; background: linear-gradient(135deg, #e94560, #ff6b6b);
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 50px; margin-bottom: 20px; animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(233,69,96,0.7); }
+      50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(233,69,96,0); }
+    }
+    .incoming-modal h2 { margin-bottom: 10px; }
+    .incoming-modal p { color: #888; margin-bottom: 40px; }
+    .incoming-modal .btns { display: flex; gap: 50px; }
+    .incoming-modal .btns button {
+      width: 65px; height: 65px; border-radius: 50%; border: none; cursor: pointer; font-size: 28px;
+    }
+    .incoming-modal .accept { background: #22c55e; }
+    .incoming-modal .reject { background: #ef4444; }
+
+    /* Debug */
+    #debug {
+      position: fixed; bottom: 70px; left: 5px; right: 5px;
+      background: rgba(0,0,0,0.95); border: 1px solid #333; border-radius: 8px;
+      padding: 8px; font-size: 10px; max-height: 120px; overflow-y: auto;
+      font-family: monospace; display: none; z-index: 999;
+    }
+    #debug.show { display: block; }
+    #debug .log { color: #0f0; margin: 2px 0; }
+    #debug .err { color: #f55; }
+    #debugBtn {
+      position: fixed; bottom: 72px; right: 5px; background: #333; color: #fff;
+      border: none; padding: 5px 10px; border-radius: 5px; font-size: 10px; z-index: 1000; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Join Screen -->
+  <div class="screen active" id="joinScreen">
+    <div class="join-box">
+      <h1>🔐</h1>
+      <h2 style="margin-bottom: 10px;">Private Chat</h2>
+      <p style="color: #888; margin-bottom: 20px;">Chat & Video Calls</p>
+      <input type="text" id="nameInput" placeholder="Your name" maxlength="20">
+      <input type="text" id="roomInput" placeholder="Room code" maxlength="30">
+      <button id="joinBtn">Join Room</button>
+    </div>
+  </div>
+
+  <!-- Chat Screen -->
+  <div class="screen" id="chatScreen">
+    <div class="chat-header">
+      <div>
+        <h2 id="roomTitle">Room</h2>
+        <div class="info" id="userInfo">👥 0 online - tap to call</div>
+      </div>
+      <button class="leave-btn" id="leaveBtn">Leave</button>
+    </div>
+    <div class="messages" id="messages"></div>
+    <div class="typing-indicator" id="typingIndicator"></div>
+    <div class="chat-input">
+      <button class="img-btn" id="imgBtn">🖼️</button>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <input type="text" id="msgInput" placeholder="Type a message..." maxlength="1000">
+      <button class="send-btn" id="sendBtn">➤</button>
+    </div>
+  </div>
+
+  <!-- User List Modal -->
+  <div class="modal" id="userModal">
+    <div class="modal-content">
+      <h3>👥 Online Users</h3>
+      <div id="userList"></div>
+      <button class="close-btn" id="closeUserModal">Close</button>
+    </div>
+  </div>
+
+  <!-- Image Preview Modal -->
+  <div class="preview-modal" id="previewModal">
+    <img id="previewImg" src="">
+    <div class="btns">
+      <button class="cancel" id="cancelImg">Cancel</button>
+      <button class="send" id="confirmImg">Send</button>
+    </div>
+  </div>
+
+  <!-- Full Image Modal -->
+  <div class="fullimg-modal" id="fullImgModal">
+    <button class="close-full" id="closeFullImg">×</button>
+    <img id="fullImg" src="">
+  </div>
+
+  <!-- Incoming Call Modal -->
+  <div class="incoming-modal" id="incomingModal">
+    <div class="avatar">📹</div>
+    <h2>Incoming Call</h2>
+    <p id="callerName">Someone is calling...</p>
+    <div class="btns">
+      <button class="reject" id="rejectBtn">✕</button>
+      <button class="accept" id="acceptBtn">✓</button>
+    </div>
+  </div>
+
+  <!-- Call Screen -->
+  <div class="screen" id="callScreen">
+    <div class="video-container">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div class="call-info" id="callInfo">Connecting...</div>
+      <div class="call-status" id="callStatus">
+        <div class="spinner"></div>
+        <h3 id="statusText">Connecting...</h3>
+      </div>
+    </div>
+    <div class="call-controls">
+      <button class="ctrl-btn flip" id="flipBtn">🔄</button>
+      <button class="ctrl-btn mic" id="micBtn">🎤</button>
+      <button class="ctrl-btn end" id="endBtn">✕</button>
+      <button class="ctrl-btn cam" id="camBtn">📷</button>
+    </div>
+  </div>
+
+  <button id="debugBtn">DEBUG</button>
+  <div id="debug"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // ===== DEBUG =====
+    var debugEl = document.getElementById('debug');
+    document.getElementById('debugBtn').addEventListener('click', function() {
+      debugEl.classList.toggle('show');
+    });
+
+    function log(msg, isErr) {
+      console.log(msg);
+      var div = document.createElement('div');
+      div.className = isErr ? 'err' : 'log';
+      div.textContent = new Date().toLocaleTimeString().slice(0,5) + ' ' + msg;
+      debugEl.appendChild(div);
+      debugEl.scrollTop = 999999;
+      if (debugEl.children.length > 100) debugEl.firstChild.remove();
+    }
+
+    // ===== STATE =====
+    var myName = '';
+    var myRoom = '';
+    var myId = '';
+    var users = [];
+    var pendingImage = null;
+    var typingTimeout = null;
+    var isTyping = false;
+    var typingUsers = {}; // socketId -> username
+    var unseenMessages = []; // Messages to mark as seen when focused
+
+    // WebRTC
+    var pc = null;
+    var localStream = null;
+    var remoteStream = null;
+    var callTarget = null;
+    var incomingData = null;
+    var iceQueue = [];
+    var micOff = false;
+    var camOff = false;
+    var frontCam = true;
+
+    var iceServers = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ]
+    };
+
+    // ===== SOCKET =====
+    var socket = io();
+
+    socket.on('connect', function() {
+      myId = socket.id;
+      log('Connected: ' + myId);
+    });
+
+    socket.on('disconnect', function() {
+      log('Disconnected!', true);
+    });
+
+    socket.on('yourSocketId', function(id) {
+      myId = id;
+    });
+
+    socket.on('error', function(msg) {
+      alert(msg);
+      log('Error: ' + msg, true);
+    });
+
+    socket.on('joinSuccess', function(data) {
+      myRoom = data.room;
+      myName = data.username;
+      myId = data.socketId;
+      log('Joined room: ' + myRoom);
+      
+      document.getElementById('joinScreen').classList.remove('active');
+      document.getElementById('chatScreen').classList.add('active');
+      document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
+      addSystemMessage('Welcome! Tap "online" to video call.');
+    });
+
+    socket.on('userList', function(list) {
+      users = list;
+      document.getElementById('userInfo').textContent = '👥 ' + list.length + ' online - tap to call';
+      log('Users: ' + list.map(function(u) { return u.username; }).join(', '));
+    });
+
+    socket.on('userJoined', function(data) {
+      addSystemMessage(data.username + ' joined');
+    });
+
+    socket.on('userLeft', function(data) {
+      addSystemMessage(data.username + ' left');
+      // Remove from typing
+      delete typingUsers[data.socketId];
+      updateTypingUI();
+    });
+
+    // ===== MESSAGES =====
+    socket.on('message', function(data) {
+      var isMine = data.senderId === myId;
+      addMessage(data, isMine ? 'mine' : 'other');
+      
+      // If not mine, mark as seen
+      if (!isMine) {
+        // Remove from typing since they sent a message
+        delete typingUsers[data.senderId];
+        updateTypingUI();
+        
+        // Mark as seen if window is focused
+        if (document.hasFocus()) {
+          socket.emit('markSeen', [data.id]);
+        } else {
+          // Queue for later
+          unseenMessages.push(data.id);
+        }
+      }
+    });
+
+    // Read receipt: message was seen
+    socket.on('messageSeen', function(data) {
+      var tickEl = document.getElementById('tick-' + data.messageId);
+      if (tickEl && !tickEl.classList.contains('seen')) {
+        tickEl.textContent = '✓✓';
+        tickEl.classList.add('seen');
+        log('Message seen by ' + data.seenBy);
+      }
+    });
+
+    // ===== TYPING INDICATORS =====
+    socket.on('typing', function(data) {
+      typingUsers[data.socketId] = data.username;
+      updateTypingUI();
+      
+      // Auto-clear after 3 seconds
+      setTimeout(function() {
+        if (typingUsers[data.socketId]) {
+          delete typingUsers[data.socketId];
+          updateTypingUI();
+        }
+      }, 3000);
+    });
+
+    socket.on('stopTyping', function(data) {
+      delete typingUsers[data.socketId];
+      updateTypingUI();
+    });
+
+    function updateTypingUI() {
+      var names = Object.values(typingUsers);
+      var el = document.getElementById('typingIndicator');
+      
+      if (names.length === 0) {
+        el.innerHTML = '';
+      } else if (names.length === 1) {
+        el.innerHTML = names[0] + ' is typing<span class="dots"></span>';
+      } else if (names.length === 2) {
+        el.innerHTML = names[0] + ' and ' + names[1] + ' are typing<span class="dots"></span>';
+      } else {
+        el.innerHTML = names.length + ' people are typing<span class="dots"></span>';
+      }
+    }
+
+    // Mark unseen messages when window gets focus
+    window.addEventListener('focus', function() {
+      if (unseenMessages.length > 0) {
+        socket.emit('markSeen', unseenMessages);
+        unseenMessages = [];
+      }
+    });
+
+    // ===== WEBRTC SIGNALING =====
+    socket.on('incomingCall', function(data) {
+      log('📞 Incoming call from: ' + data.callerName);
+      if (document.getElementById('callScreen').classList.contains('active')) {
+        socket.emit('rejectCall', { targetId: data.callerId });
+        return;
+      }
+      incomingData = data;
+      document.getElementById('callerName').textContent = data.callerName + ' is calling...';
+      document.getElementById('incomingModal').classList.add('show');
+      
+      // Vibrate if supported
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    });
+
+    socket.on('callAnswered', function(data) {
+      log('Call answered!');
+      if (pc) {
+        pc.setRemoteDescription(new RTCSessionDescription(data.answer))
+          .then(function() {
+            log('Remote description set');
+            processIceQueue();
+          })
+          .catch(function(e) {
+            log('Error: ' + e.message, true);
+          });
+      }
+    });
+
+    socket.on('iceCandidate', function(data) {
+      log('Received ICE candidate');
+      if (!pc) {
+        iceQueue.push(data.candidate);
+        return;
+      }
+      if (!pc.remoteDescription || !pc.remoteDescription.type) {
+        iceQueue.push(data.candidate);
+        return;
+      }
+      pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+        .then(function() {
+          log('ICE candidate added');
+        })
+        .catch(function(e) {
+          log('ICE error: ' + e.message, true);
+        });
+    });
+
+    socket.on('callEnded', function() {
+      log('Call ended by remote');
+      addSystemMessage('Call ended');
+      cleanupCall();
+    });
+
+    socket.on('callRejected', function() {
+      log('Call rejected');
+      addSystemMessage('Call declined');
+      cleanupCall();
+    });
+
+    // ===== JOIN =====
+    document.getElementById('joinBtn').addEventListener('click', function() {
+      var name = document.getElementById('nameInput').value.trim();
+      var room = document.getElementById('roomInput').value.trim();
+      if (!name || !room) {
+        alert('Please fill both fields');
+        return;
+      }
+      log('Joining...');
+      socket.emit('join', { username: name, roomCode: room });
+    });
+
+    document.getElementById('nameInput').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') document.getElementById('roomInput').focus();
+    });
+
+    document.getElementById('roomInput').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') document.getElementById('joinBtn').click();
+    });
+
+    // ===== MESSAGE FUNCTIONS =====
+    function addSystemMessage(text) {
+      var div = document.createElement('div');
+      div.className = 'msg sys';
+      div.textContent = text;
+      document.getElementById('messages').appendChild(div);
+      scrollToBottom();
+    }
+
+    function addMessage(data, type) {
+      var div = document.createElement('div');
+      div.className = 'msg ' + type;
+      div.id = 'msg-' + data.id;
+      div.dataset.senderId = data.senderId;
+      
+      var html = '';
+      
+      // Sender name for other's messages
+      if (type === 'other') {
+        html += '<div class="sender">' + escapeHtml(data.username) + '</div>';
+      }
+      
+      // Content
+      if (data.type === 'image') {
+        html += '<div class="text"><img src="' + data.imageData + '" onclick="showFullImage(this.src)"></div>';
+      } else {
+        html += '<div class="text">' + escapeHtml(data.text) + '</div>';
+      }
+      
+      // Meta: time + ticks for own messages
+      html += '<div class="meta">';
+      html += '<span class="time">' + data.timestamp + '</span>';
+      if (type === 'mine') {
+        html += '<span class="ticks" id="tick-' + data.id + '">✓</span>';
+      }
+      html += '</div>';
+      
+      div.innerHTML = html;
+      document.getElementById('messages').appendChild(div);
+      scrollToBottom();
+    }
+
+    function scrollToBottom() {
+      var msgs = document.getElementById('messages');
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Full image view
+    window.showFullImage = function(src) {
+      document.getElementById('fullImg').src = src;
+      document.getElementById('fullImgModal').classList.add('show');
+    };
+
+    document.getElementById('closeFullImg').addEventListener('click', function() {
+      document.getElementById('fullImgModal').classList.remove('show');
+    });
+
+    document.getElementById('fullImgModal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        this.classList.remove('show');
+      }
+    });
+
+    // ===== SEND MESSAGE =====
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
+    document.getElementById('msgInput').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    // Typing indicator
+    document.getElementById('msgInput').addEventListener('input', function() {
+      if (!isTyping) {
+        isTyping = true;
+        socket.emit('typing');
+      }
+      
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(function() {
+        isTyping = false;
+        socket.emit('stopTyping');
+      }, 2000);
+    });
+
+    function sendMessage() {
+      var input = document.getElementById('msgInput');
+      var text = input.value.trim();
+      if (text) {
+        log('Sending: ' + text.slice(0, 30));
+        socket.emit('message', text);
+        input.value = '';
+        isTyping = false;
+        socket.emit('stopTyping');
+      }
+    }
+
+    // ===== IMAGE =====
+    document.getElementById('imgBtn').addEventListener('click', function() {
+      document.getElementById('fileInput').click();
+    });
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 3 * 1024 * 1024) {
+        alert('Max 3MB');
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        pendingImage = ev.target.result;
+        document.getElementById('previewImg').src = pendingImage;
+        document.getElementById('previewModal').classList.add('show');
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    });
+
+    document.getElementById('cancelImg').addEventListener('click', function() {
+      document.getElementById('previewModal').classList.remove('show');
+      pendingImage = null;
+    });
+
+    document.getElementById('confirmImg').addEventListener('click', function() {
+      if (pendingImage) {
+        log('Sending image');
+        socket.emit('imageMessage', pendingImage);
+        document.getElementById('previewModal').classList.remove('show');
+        pendingImage = null;
+      }
+    });
+
+    // ===== USER LIST =====
+    document.getElementById('userInfo').addEventListener('click', function() {
+      renderUserList();
+      document.getElementById('userModal').classList.add('show');
+    });
+
+    document.getElementById('closeUserModal').addEventListener('click', function() {
+      document.getElementById('userModal').classList.remove('show');
+    });
+
+    function renderUserList() {
+      var list = document.getElementById('userList');
+      list.innerHTML = '';
+      users.forEach(function(u) {
+        var isMe = u.socketId === myId;
+        var div = document.createElement('div');
+        div.className = 'user-item' + (isMe ? ' me' : '');
+        div.innerHTML = '<span class="name">' + (isMe ? '👤 ' : '🟢 ') + escapeHtml(u.username) + (isMe ? ' (you)' : '') + '</span>';
+        if (!isMe) {
+          var btn = document.createElement('button');
+          btn.className = 'call-btn';
+          btn.textContent = '📹 Call';
+          btn.onclick = function() {
+            document.getElementById('userModal').classList.remove('show');
+            startCall(u.socketId, u.username);
+          };
+          div.appendChild(btn);
+        }
+        list.appendChild(div);
+      });
+    }
+
+    document.getElementById('leaveBtn').addEventListener('click', function() {
+      if (confirm('Leave room?')) {
+        location.reload();
+      }
+    });
+
+    // ===== VIDEO CALL =====
+    function startCall(targetId, targetName) {
+      log('📞 Calling ' + targetName);
+      callTarget = targetId;
+      iceQueue = [];
+
+      document.getElementById('callScreen').classList.add('active');
+      document.getElementById('callStatus').style.display = 'block';
+      document.getElementById('statusText').textContent = 'Calling ' + targetName + '...';
+
+      getMedia()
+        .then(function() {
+          createPC();
+          localStream.getTracks().forEach(function(track) {
+            pc.addTrack(track, localStream);
+          });
+          return pc.createOffer();
+        })
+        .then(function(offer) {
+          return pc.setLocalDescription(offer);
+        })
+        .then(function() {
+          log('Sending offer');
+          socket.emit('callUser', {
+            targetId: targetId,
+            offer: pc.localDescription,
+            callerName: myName
+          });
+        })
+        .catch(function(e) {
+          log('Call error: ' + e.message, true);
+          alert('Error: ' + e.message);
+          cleanupCall();
+        });
+    }
+
+    function getMedia() {
+      log('Getting media...');
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: frontCam ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: { echoCancellation: true, noiseSuppression: true }
+      }).then(function(stream) {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        log('Media ready');
+        return stream;
+      });
+    }
+
+    function createPC() {
+      log('Creating peer connection');
+      pc = new RTCPeerConnection(iceServers);
+
+      remoteStream = new MediaStream();
+      document.getElementById('remoteVideo').srcObject = remoteStream;
+
+      pc.ontrack = function(e) {
+        log('Got remote track: ' + e.track.kind);
+        remoteStream.addTrack(e.track);
+        if (e.track.kind === 'video') {
+          document.getElementById('callStatus').style.display = 'none';
+          document.getElementById('remoteVideo').play().catch(function() {});
+        }
+      };
+
+      pc.onicecandidate = function(e) {
+        if (e.candidate && callTarget) {
+          socket.emit('iceCandidate', {
+            targetId: callTarget,
+            candidate: e.candidate
+          });
+        }
+      };
+
+      pc.oniceconnectionstatechange = function() {
+        log('ICE: ' + pc.iceConnectionState);
+        document.getElementById('callInfo').textContent = pc.iceConnectionState;
+        if (pc.iceConnectionState === 'connected') {
+          document.getElementById('callStatus').style.display = 'none';
+        }
+        if (pc.iceConnectionState === 'failed') {
+          pc.restartIce();
+        }
+      };
+
+      pc.onconnectionstatechange = function() {
+        log('Connection: ' + pc.connectionState);
+        if (pc.connectionState === 'failed') {
+          addSystemMessage('Call failed');
+          cleanupCall();
+        }
+      };
+    }
+
+    function processIceQueue() {
+      log('Processing ' + iceQueue.length + ' queued candidates');
+      while (iceQueue.length > 0) {
+        var candidate = iceQueue.shift();
+        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(function() {});
+      }
+    }
+
+    // Accept call
+    document.getElementById('acceptBtn').addEventListener('click', function() {
+      log('Accepting call');
+      document.getElementById('incomingModal').classList.remove('show');
+      callTarget = incomingData.callerId;
+      iceQueue = [];
+
+      document.getElementById('callScreen').classList.add('active');
+      document.getElementById('callStatus').style.display = 'block';
+      document.getElementById('statusText').textContent = 'Connecting...';
+
+      getMedia()
+        .then(function() {
+          createPC();
+          localStream.getTracks().forEach(function(track) {
+            pc.addTrack(track, localStream);
+          });
+          return pc.setRemoteDescription(new RTCSessionDescription(incomingData.offer));
+        })
+        .then(function() {
+          log('Remote description set');
+          processIceQueue();
+          return pc.createAnswer();
+        })
+        .then(function(answer) {
+          return pc.setLocalDescription(answer);
+        })
+        .then(function() {
+          log('Sending answer');
+          socket.emit('answerCall', {
+            targetId: incomingData.callerId,
+            answer: pc.localDescription
+          });
+          incomingData = null;
+        })
+        .catch(function(e) {
+          log('Accept error: ' + e.message, true);
+          alert('Error: ' + e.message);
+          cleanupCall();
+        });
+    });
+
+    // Reject call
+    document.getElementById('rejectBtn').addEventListener('click', function() {
+      log('Rejecting call');
+      socket.emit('rejectCall', { targetId: incomingData.callerId });
+      document.getElementById('incomingModal').classList.remove('show');
+      incomingData = null;
+    });
+
+    // End call
+    document.getElementById('endBtn').addEventListener('click', function() {
+      log('Ending call');
+      if (callTarget) {
+        socket.emit('endCall', { targetId: callTarget });
+      }
+      cleanupCall();
+    });
+
+    function cleanupCall() {
+      log('Cleaning up');
+      if (localStream) {
+        localStream.getTracks().forEach(function(t) { t.stop(); });
+        localStream = null;
+      }
+      if (remoteStream) {
+        remoteStream.getTracks().forEach(function(t) { t.stop(); });
+        remoteStream = null;
+      }
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      document.getElementById('localVideo').srcObject = null;
+      document.getElementById('remoteVideo').srcObject = null;
+      document.getElementById('callScreen').classList.remove('active');
+      document.getElementById('incomingModal').classList.remove('show');
+      callTarget = null;
+      incomingData = null;
+      iceQueue = [];
+      micOff = false;
+      camOff = false;
+      document.getElementById('micBtn').classList.remove('off');
+      document.getElementById('micBtn').textContent = '🎤';
+      document.getElementById('camBtn').classList.remove('off');
+      document.getElementById('camBtn').textContent = '📷';
+    }
+
+    // Toggle mic
+    document.getElementById('micBtn').addEventListener('click', function() {
+      if (!localStream) return;
+      micOff = !micOff;
+      localStream.getAudioTracks().forEach(function(t) { t.enabled = !micOff; });
+      this.classList.toggle('off', micOff);
+      this.textContent = micOff ? '🔇' : '🎤';
+    });
+
+    // Toggle cam
+    document.getElementById('camBtn').addEventListener('click', function() {
+      if (!localStream) return;
+      camOff = !camOff;
+      localStream.getVideoTracks().forEach(function(t) { t.enabled = !camOff; });
+      this.classList.toggle('off', camOff);
+      this.textContent = camOff ? '📵' : '📷';
+    });
+
+    // Flip camera
+    document.getElementById('flipBtn').addEventListener('click', function() {
+      if (!localStream) return;
+      frontCam = !frontCam;
+      localStream.getVideoTracks().forEach(function(t) { t.stop(); });
+      
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: frontCam ? 'user' : 'environment' },
+        audio: false
+      }).then(function(stream) {
+        var newTrack = stream.getVideoTracks()[0];
+        if (pc) {
+          var sender = pc.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
+          if (sender) sender.replaceTrack(newTrack);
+        }
+        var oldTrack = localStream.getVideoTracks()[0];
+        if (oldTrack) localStream.removeTrack(oldTrack);
+        localStream.addTrack(newTrack);
+        document.getElementById('localVideo').srcObject = localStream;
+        log('Camera flipped');
+      }).catch(function(e) {
+        log('Flip error: ' + e.message, true);
+      });
+    });
+  </script>
+</body>
+</html>
