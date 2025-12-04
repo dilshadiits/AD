@@ -36,9 +36,9 @@ app.use(rateLimit({
 app.use(express.static('public'));
 
 // ================== DATA STORES ==================
-const rooms = new Map();           // Room -> Map<SocketId, UserData>
-const messageStore = new Map();    // Room -> Array<MessageMeta>
-const activeCalls = new Map();     // SocketId -> TargetSocketId
+const rooms = new Map();
+const messageStore = new Map();
+const activeCalls = new Map();
 
 // ================== HELPERS ==================
 function getUsers(room) {
@@ -81,7 +81,6 @@ io.on('connection', (socket) => {
         return socket.emit('error', 'Invalid username or room code');
       }
 
-      // Create room if doesn't exist
       if (!rooms.has(room)) {
         rooms.set(room, new Map());
         messageStore.set(room, []);
@@ -89,14 +88,12 @@ io.on('connection', (socket) => {
 
       const roomUsers = rooms.get(room);
 
-      // Check username uniqueness
       for (let [, u] of roomUsers) {
         if (u.username.toLowerCase() === name.toLowerCase()) {
           return socket.emit('error', 'Username already taken');
         }
       }
 
-      // Save to socket
       socket.username = name;
       socket.roomCode = room;
       socket.join(room);
@@ -104,7 +101,6 @@ io.on('connection', (socket) => {
 
       console.log(`👤 ${name} joined room: ${room} (${roomUsers.size} users)`);
 
-      // Notify
       socket.emit('joinSuccess', { room, username: name, socketId: socket.id });
       socket.to(room).emit('userJoined', { username: name, socketId: socket.id });
       io.to(room).emit('userList', getUsers(room));
@@ -135,7 +131,6 @@ io.on('connection', (socket) => {
         timestamp: getTimestamp()
       };
 
-      // Store for read receipts
       const roomMsgs = messageStore.get(socket.roomCode);
       if (roomMsgs) {
         roomMsgs.push({
@@ -176,7 +171,6 @@ io.on('connection', (socket) => {
         timestamp: getTimestamp()
       };
 
-      // Store for read receipts
       const roomMsgs = messageStore.get(socket.roomCode);
       if (roomMsgs) {
         roomMsgs.push({
@@ -211,7 +205,6 @@ io.on('connection', (socket) => {
         if (msg && msg.senderId !== socket.id && !msg.seenBy.has(socket.id)) {
           msg.seenBy.add(socket.id);
 
-          // Notify the sender
           io.to(msg.senderId).emit('messageSeen', {
             messageId: msgId,
             seenBy: socket.username,
@@ -246,16 +239,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ============ WEBRTC VIDEO CALL ============
+  // ============ WEBRTC AUDIO CALL ============
 
-  // Caller initiates
   socket.on('callUser', ({ targetId, offer, callerName }) => {
     try {
       if (!targetId || !offer) return;
 
       console.log(`📞 ${socket.username} calling ${targetId}`);
 
-      // Track active call
       activeCalls.set(socket.id, targetId);
       activeCalls.set(targetId, socket.id);
 
@@ -270,7 +261,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Receiver answers
   socket.on('answerCall', ({ targetId, answer }) => {
     try {
       if (!targetId || !answer) return;
@@ -287,7 +277,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ICE Candidate exchange
   socket.on('iceCandidate', ({ targetId, candidate }) => {
     try {
       if (!targetId || !candidate) return;
@@ -302,7 +291,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Reject call
   socket.on('rejectCall', ({ targetId }) => {
     try {
       if (!targetId) return;
@@ -322,7 +310,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // End call
   socket.on('endCall', ({ targetId }) => {
     try {
       if (!targetId) return;
@@ -347,7 +334,6 @@ io.on('connection', (socket) => {
     console.log('❌ Disconnected:', socket.username || socket.id);
 
     try {
-      // End any active call
       const callPartner = activeCalls.get(socket.id);
       if (callPartner) {
         io.to(callPartner).emit('callEnded', {
@@ -358,7 +344,6 @@ io.on('connection', (socket) => {
         activeCalls.delete(socket.id);
       }
 
-      // Clear typing indicator
       if (socket.roomCode) {
         socket.to(socket.roomCode).emit('stopTyping', {
           username: socket.username,
@@ -366,7 +351,6 @@ io.on('connection', (socket) => {
         });
       }
 
-      // Remove from room
       if (socket.roomCode && rooms.has(socket.roomCode)) {
         const roomUsers = rooms.get(socket.roomCode);
         roomUsers.delete(socket.id);

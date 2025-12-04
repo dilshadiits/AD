@@ -38,6 +38,7 @@
     .chat-header {
       padding: 15px; background: rgba(0,0,0,0.5);
       display: flex; justify-content: space-between; align-items: center;
+      flex-shrink: 0;
     }
     .chat-header h2 { font-size: 16px; }
     .chat-header .info { color: #4ade80; font-size: 13px; cursor: pointer; }
@@ -49,6 +50,7 @@
     .messages {
       flex: 1; overflow-y: auto; padding: 15px;
       display: flex; flex-direction: column; gap: 10px;
+      min-height: 0; /* Important for flex scroll */
     }
     .msg { max-width: 80%; padding: 10px 14px; border-radius: 15px; animation: fadeIn 0.2s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
@@ -58,7 +60,6 @@
     .msg .text { font-size: 15px; word-break: break-word; }
     .msg .text img { max-width: 200px; border-radius: 8px; margin-top: 5px; cursor: pointer; }
     
-    /* Message Meta with Ticks */
     .msg .meta { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 5px; }
     .msg .time { font-size: 10px; color: rgba(255,255,255,0.5); }
     .msg .ticks { font-size: 14px; font-weight: bold; color: rgba(255,255,255,0.5); transition: color 0.3s; }
@@ -66,10 +67,14 @@
     
     .msg.sys { align-self: center; background: rgba(255,255,255,0.05); color: #888; font-size: 12px; }
 
-    /* Typing Indicator */
+    /* Typing Indicator - Fixed height */
     .typing-indicator { 
-      padding: 5px 15px; min-height: 24px;
+      padding: 5px 15px; 
+      height: 24px;
+      min-height: 24px;
+      max-height: 24px;
       font-size: 13px; color: #888; font-style: italic;
+      flex-shrink: 0;
     }
     .typing-indicator .dots::after {
       content: '';
@@ -84,6 +89,7 @@
     .chat-input {
       padding: 12px; background: rgba(0,0,0,0.5);
       display: flex; gap: 10px; align-items: center;
+      flex-shrink: 0;
     }
     .chat-input input {
       flex: 1; padding: 12px 16px; border: none; border-radius: 25px;
@@ -149,40 +155,68 @@
       width: 40px; height: 40px; border-radius: 50%; font-size: 24px; cursor: pointer;
     }
 
-    /* Call Screen */
-    #callScreen { background: #000; z-index: 200; }
-    .video-container { flex: 1; position: relative; }
-    #remoteVideo { width: 100%; height: 100%; object-fit: contain; background: #111; }
-    #localVideo {
-      position: absolute; top: 20px; right: 20px;
-      width: 100px; height: 140px; object-fit: cover;
-      border-radius: 10px; border: 2px solid #fff; background: #333;
+    /* Audio Call Screen */
+    #callScreen { 
+      background: linear-gradient(135deg, #1a1a2e, #16213e); 
+      z-index: 200; 
+      align-items: center;
+      justify-content: center;
     }
-    .call-status {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      text-align: center; background: rgba(0,0,0,0.8); padding: 30px; border-radius: 15px;
+    .call-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      width: 100%;
     }
-    .call-status .spinner {
-      width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.3);
-      border-top-color: #e94560; border-radius: 50%;
-      animation: spin 1s linear infinite; margin: 0 auto 15px;
+    .call-avatar {
+      width: 120px; height: 120px;
+      background: linear-gradient(135deg, #e94560, #ff6b6b);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 60px;
+      margin-bottom: 25px;
+      box-shadow: 0 0 40px rgba(233, 69, 96, 0.4);
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .call-info {
-      position: absolute; top: 15px; left: 15px;
-      background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    .call-avatar.connected {
+      animation: pulse-connected 2s infinite;
+    }
+    @keyframes pulse-connected {
+      0%, 100% { box-shadow: 0 0 40px rgba(34, 197, 94, 0.4); }
+      50% { box-shadow: 0 0 60px rgba(34, 197, 94, 0.6); }
+    }
+    .call-avatar.connected { background: linear-gradient(135deg, #22c55e, #4ade80); }
+    .call-name {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .call-status-text {
+      font-size: 16px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .call-timer {
+      font-size: 18px;
+      color: #4ade80;
+      font-family: monospace;
+      margin-bottom: 40px;
     }
     .call-controls {
-      display: flex; justify-content: center; gap: 20px; padding: 25px; background: rgba(0,0,0,0.8);
+      display: flex; justify-content: center; gap: 30px; padding: 25px;
+      position: absolute;
+      bottom: 50px;
     }
     .ctrl-btn {
-      width: 55px; height: 55px; border-radius: 50%; border: none;
-      display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 22px;
+      width: 60px; height: 60px; border-radius: 50%; border: none;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 24px;
+      transition: transform 0.2s, background 0.2s;
     }
+    .ctrl-btn:active { transform: scale(0.95); }
     .ctrl-btn.end { background: #ef4444; }
     .ctrl-btn.mic { background: #3b82f6; }
-    .ctrl-btn.cam { background: #3b82f6; }
-    .ctrl-btn.flip { background: #8b5cf6; }
+    .ctrl-btn.speaker { background: #8b5cf6; }
     .ctrl-btn.off { background: #666; }
 
     /* Incoming Call */
@@ -192,13 +226,13 @@
     }
     .incoming-modal.show { display: flex; }
     .incoming-modal .avatar {
-      width: 100px; height: 100px; background: linear-gradient(135deg, #e94560, #ff6b6b);
+      width: 100px; height: 100px; background: linear-gradient(135deg, #22c55e, #4ade80);
       border-radius: 50%; display: flex; align-items: center; justify-content: center;
       font-size: 50px; margin-bottom: 20px; animation: pulse 1.5s infinite;
     }
     @keyframes pulse {
-      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(233,69,96,0.7); }
-      50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(233,69,96,0); }
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+      50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(34, 197, 94, 0); }
     }
     .incoming-modal h2 { margin-bottom: 10px; }
     .incoming-modal p { color: #888; margin-bottom: 40px; }
@@ -232,7 +266,7 @@
     <div class="join-box">
       <h1>🔐</h1>
       <h2 style="margin-bottom: 10px;">Private Chat</h2>
-      <p style="color: #888; margin-bottom: 20px;">Chat & Video Calls</p>
+      <p style="color: #888; margin-bottom: 20px;">Chat & Audio Calls</p>
       <input type="text" id="nameInput" placeholder="Your name" maxlength="20">
       <input type="text" id="roomInput" placeholder="Room code" maxlength="30">
       <button id="joinBtn">Join Room</button>
@@ -284,8 +318,8 @@
 
   <!-- Incoming Call Modal -->
   <div class="incoming-modal" id="incomingModal">
-    <div class="avatar">📹</div>
-    <h2>Incoming Call</h2>
+    <div class="avatar">📞</div>
+    <h2>Incoming Audio Call</h2>
     <p id="callerName">Someone is calling...</p>
     <div class="btns">
       <button class="reject" id="rejectBtn">✕</button>
@@ -293,23 +327,20 @@
     </div>
   </div>
 
-  <!-- Call Screen -->
+  <!-- Audio Call Screen -->
   <div class="screen" id="callScreen">
-    <div class="video-container">
-      <video id="remoteVideo" autoplay playsinline></video>
-      <video id="localVideo" autoplay playsinline muted></video>
-      <div class="call-info" id="callInfo">Connecting...</div>
-      <div class="call-status" id="callStatus">
-        <div class="spinner"></div>
-        <h3 id="statusText">Connecting...</h3>
-      </div>
+    <div class="call-container">
+      <div class="call-avatar" id="callAvatar">📞</div>
+      <div class="call-name" id="callName">User</div>
+      <div class="call-status-text" id="callStatusText">Connecting...</div>
+      <div class="call-timer" id="callTimer">00:00</div>
     </div>
     <div class="call-controls">
-      <button class="ctrl-btn flip" id="flipBtn">🔄</button>
+      <button class="ctrl-btn speaker" id="speakerBtn">🔊</button>
       <button class="ctrl-btn mic" id="micBtn">🎤</button>
       <button class="ctrl-btn end" id="endBtn">✕</button>
-      <button class="ctrl-btn cam" id="camBtn">📷</button>
     </div>
+    <audio id="remoteAudio" autoplay></audio>
   </div>
 
   <button id="debugBtn">DEBUG</button>
@@ -341,19 +372,21 @@
     var pendingImage = null;
     var typingTimeout = null;
     var isTyping = false;
-    var typingUsers = {}; // socketId -> username
-    var unseenMessages = []; // Messages to mark as seen when focused
+    var typingUsers = {};
+    var unseenMessages = [];
+    var userScrolledUp = false; // Track if user scrolled up
 
-    // WebRTC
+    // WebRTC Audio Call
     var pc = null;
     var localStream = null;
-    var remoteStream = null;
     var callTarget = null;
+    var callTargetName = '';
     var incomingData = null;
     var iceQueue = [];
     var micOff = false;
-    var camOff = false;
-    var frontCam = true;
+    var speakerOff = false;
+    var callTimer = null;
+    var callSeconds = 0;
 
     var iceServers = {
       iceServers: [
@@ -396,7 +429,7 @@
       document.getElementById('joinScreen').classList.remove('active');
       document.getElementById('chatScreen').classList.add('active');
       document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
-      addSystemMessage('Welcome! Tap "online" to video call.');
+      addSystemMessage('Welcome! Tap "online" to make audio calls.');
     });
 
     socket.on('userList', function(list) {
@@ -411,33 +444,41 @@
 
     socket.on('userLeft', function(data) {
       addSystemMessage(data.username + ' left');
-      // Remove from typing
       delete typingUsers[data.socketId];
       updateTypingUI();
     });
+
+    // ===== SCROLL DETECTION =====
+    document.getElementById('messages').addEventListener('scroll', function() {
+      var msgs = this;
+      var threshold = 100; // pixels from bottom
+      userScrolledUp = (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight) > threshold;
+    });
+
+    function scrollToBottom(force) {
+      if (force || !userScrolledUp) {
+        var msgs = document.getElementById('messages');
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    }
 
     // ===== MESSAGES =====
     socket.on('message', function(data) {
       var isMine = data.senderId === myId;
       addMessage(data, isMine ? 'mine' : 'other');
       
-      // If not mine, mark as seen
       if (!isMine) {
-        // Remove from typing since they sent a message
         delete typingUsers[data.senderId];
         updateTypingUI();
         
-        // Mark as seen if window is focused
         if (document.hasFocus()) {
           socket.emit('markSeen', [data.id]);
         } else {
-          // Queue for later
           unseenMessages.push(data.id);
         }
       }
     });
 
-    // Read receipt: message was seen
     socket.on('messageSeen', function(data) {
       var tickEl = document.getElementById('tick-' + data.messageId);
       if (tickEl && !tickEl.classList.contains('seen')) {
@@ -452,7 +493,6 @@
       typingUsers[data.socketId] = data.username;
       updateTypingUI();
       
-      // Auto-clear after 3 seconds
       setTimeout(function() {
         if (typingUsers[data.socketId]) {
           delete typingUsers[data.socketId];
@@ -471,7 +511,7 @@
       var el = document.getElementById('typingIndicator');
       
       if (names.length === 0) {
-        el.innerHTML = '';
+        el.innerHTML = '&nbsp;'; // Keep height but show nothing visible
       } else if (names.length === 1) {
         el.innerHTML = names[0] + ' is typing<span class="dots"></span>';
       } else if (names.length === 2) {
@@ -481,7 +521,6 @@
       }
     }
 
-    // Mark unseen messages when window gets focus
     window.addEventListener('focus', function() {
       if (unseenMessages.length > 0) {
         socket.emit('markSeen', unseenMessages);
@@ -500,8 +539,7 @@
       document.getElementById('callerName').textContent = data.callerName + ' is calling...';
       document.getElementById('incomingModal').classList.add('show');
       
-      // Vibrate if supported
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
     });
 
     socket.on('callAnswered', function(data) {
@@ -586,19 +624,16 @@
       
       var html = '';
       
-      // Sender name for other's messages
       if (type === 'other') {
         html += '<div class="sender">' + escapeHtml(data.username) + '</div>';
       }
       
-      // Content
       if (data.type === 'image') {
         html += '<div class="text"><img src="' + data.imageData + '" onclick="showFullImage(this.src)"></div>';
       } else {
         html += '<div class="text">' + escapeHtml(data.text) + '</div>';
       }
       
-      // Meta: time + ticks for own messages
       html += '<div class="meta">';
       html += '<span class="time">' + data.timestamp + '</span>';
       if (type === 'mine') {
@@ -608,12 +643,9 @@
       
       div.innerHTML = html;
       document.getElementById('messages').appendChild(div);
-      scrollToBottom();
-    }
-
-    function scrollToBottom() {
-      var msgs = document.getElementById('messages');
-      msgs.scrollTop = msgs.scrollHeight;
+      
+      // Force scroll for own messages, respect user scroll for others
+      scrollToBottom(type === 'mine');
     }
 
     function escapeHtml(text) {
@@ -622,7 +654,6 @@
       return div.innerHTML;
     }
 
-    // Full image view
     window.showFullImage = function(src) {
       document.getElementById('fullImg').src = src;
       document.getElementById('fullImgModal').classList.add('show');
@@ -644,7 +675,6 @@
       if (e.key === 'Enter') sendMessage();
     });
 
-    // Typing indicator
     document.getElementById('msgInput').addEventListener('input', function() {
       if (!isTyping) {
         isTyping = true;
@@ -727,7 +757,7 @@
         if (!isMe) {
           var btn = document.createElement('button');
           btn.className = 'call-btn';
-          btn.textContent = '📹 Call';
+          btn.textContent = '📞 Call';
           btn.onclick = function() {
             document.getElementById('userModal').classList.remove('show');
             startCall(u.socketId, u.username);
@@ -744,17 +774,20 @@
       }
     });
 
-    // ===== VIDEO CALL =====
+    // ===== AUDIO CALL =====
     function startCall(targetId, targetName) {
       log('📞 Calling ' + targetName);
       callTarget = targetId;
+      callTargetName = targetName;
       iceQueue = [];
 
       document.getElementById('callScreen').classList.add('active');
-      document.getElementById('callStatus').style.display = 'block';
-      document.getElementById('statusText').textContent = 'Calling ' + targetName + '...';
+      document.getElementById('callName').textContent = targetName;
+      document.getElementById('callStatusText').textContent = 'Calling...';
+      document.getElementById('callTimer').textContent = '00:00';
+      document.getElementById('callAvatar').classList.remove('connected');
 
-      getMedia()
+      getAudio()
         .then(function() {
           createPC();
           localStream.getTracks().forEach(function(track) {
@@ -780,15 +813,14 @@
         });
     }
 
-    function getMedia() {
-      log('Getting media...');
+    function getAudio() {
+      log('Getting audio...');
       return navigator.mediaDevices.getUserMedia({
-        video: { facingMode: frontCam ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: { echoCancellation: true, noiseSuppression: true }
+        video: false,
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       }).then(function(stream) {
         localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        log('Media ready');
+        log('Audio ready');
         return stream;
       });
     }
@@ -797,15 +829,14 @@
       log('Creating peer connection');
       pc = new RTCPeerConnection(iceServers);
 
-      remoteStream = new MediaStream();
-      document.getElementById('remoteVideo').srcObject = remoteStream;
-
       pc.ontrack = function(e) {
         log('Got remote track: ' + e.track.kind);
-        remoteStream.addTrack(e.track);
-        if (e.track.kind === 'video') {
-          document.getElementById('callStatus').style.display = 'none';
-          document.getElementById('remoteVideo').play().catch(function() {});
+        document.getElementById('remoteAudio').srcObject = e.streams[0];
+        
+        if (e.track.kind === 'audio') {
+          document.getElementById('callStatusText').textContent = 'Connected';
+          document.getElementById('callAvatar').classList.add('connected');
+          startCallTimer();
         }
       };
 
@@ -820,12 +851,16 @@
 
       pc.oniceconnectionstatechange = function() {
         log('ICE: ' + pc.iceConnectionState);
-        document.getElementById('callInfo').textContent = pc.iceConnectionState;
         if (pc.iceConnectionState === 'connected') {
-          document.getElementById('callStatus').style.display = 'none';
+          document.getElementById('callStatusText').textContent = 'Connected';
+          document.getElementById('callAvatar').classList.add('connected');
+          startCallTimer();
         }
         if (pc.iceConnectionState === 'failed') {
           pc.restartIce();
+        }
+        if (pc.iceConnectionState === 'disconnected') {
+          document.getElementById('callStatusText').textContent = 'Reconnecting...';
         }
       };
 
@@ -846,18 +881,41 @@
       }
     }
 
+    function startCallTimer() {
+      if (callTimer) return;
+      callSeconds = 0;
+      callTimer = setInterval(function() {
+        callSeconds++;
+        var mins = Math.floor(callSeconds / 60);
+        var secs = callSeconds % 60;
+        document.getElementById('callTimer').textContent = 
+          (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+      }, 1000);
+    }
+
+    function stopCallTimer() {
+      if (callTimer) {
+        clearInterval(callTimer);
+        callTimer = null;
+      }
+      callSeconds = 0;
+    }
+
     // Accept call
     document.getElementById('acceptBtn').addEventListener('click', function() {
       log('Accepting call');
       document.getElementById('incomingModal').classList.remove('show');
       callTarget = incomingData.callerId;
+      callTargetName = incomingData.callerName;
       iceQueue = [];
 
       document.getElementById('callScreen').classList.add('active');
-      document.getElementById('callStatus').style.display = 'block';
-      document.getElementById('statusText').textContent = 'Connecting...';
+      document.getElementById('callName').textContent = callTargetName;
+      document.getElementById('callStatusText').textContent = 'Connecting...';
+      document.getElementById('callTimer').textContent = '00:00';
+      document.getElementById('callAvatar').classList.remove('connected');
 
-      getMedia()
+      getAudio()
         .then(function() {
           createPC();
           localStream.getTracks().forEach(function(track) {
@@ -902,36 +960,35 @@
       if (callTarget) {
         socket.emit('endCall', { targetId: callTarget });
       }
+      addSystemMessage('Call ended (' + document.getElementById('callTimer').textContent + ')');
       cleanupCall();
     });
 
     function cleanupCall() {
       log('Cleaning up');
+      stopCallTimer();
+      
       if (localStream) {
         localStream.getTracks().forEach(function(t) { t.stop(); });
         localStream = null;
-      }
-      if (remoteStream) {
-        remoteStream.getTracks().forEach(function(t) { t.stop(); });
-        remoteStream = null;
       }
       if (pc) {
         pc.close();
         pc = null;
       }
-      document.getElementById('localVideo').srcObject = null;
-      document.getElementById('remoteVideo').srcObject = null;
+      document.getElementById('remoteAudio').srcObject = null;
       document.getElementById('callScreen').classList.remove('active');
       document.getElementById('incomingModal').classList.remove('show');
       callTarget = null;
+      callTargetName = '';
       incomingData = null;
       iceQueue = [];
       micOff = false;
-      camOff = false;
+      speakerOff = false;
       document.getElementById('micBtn').classList.remove('off');
       document.getElementById('micBtn').textContent = '🎤';
-      document.getElementById('camBtn').classList.remove('off');
-      document.getElementById('camBtn').textContent = '📷';
+      document.getElementById('speakerBtn').classList.remove('off');
+      document.getElementById('speakerBtn').textContent = '🔊';
     }
 
     // Toggle mic
@@ -943,39 +1000,17 @@
       this.textContent = micOff ? '🔇' : '🎤';
     });
 
-    // Toggle cam
-    document.getElementById('camBtn').addEventListener('click', function() {
-      if (!localStream) return;
-      camOff = !camOff;
-      localStream.getVideoTracks().forEach(function(t) { t.enabled = !camOff; });
-      this.classList.toggle('off', camOff);
-      this.textContent = camOff ? '📵' : '📷';
+    // Toggle speaker
+    document.getElementById('speakerBtn').addEventListener('click', function() {
+      var audio = document.getElementById('remoteAudio');
+      speakerOff = !speakerOff;
+      audio.muted = speakerOff;
+      this.classList.toggle('off', speakerOff);
+      this.textContent = speakerOff ? '🔈' : '🔊';
     });
 
-    // Flip camera
-    document.getElementById('flipBtn').addEventListener('click', function() {
-      if (!localStream) return;
-      frontCam = !frontCam;
-      localStream.getVideoTracks().forEach(function(t) { t.stop(); });
-      
-      navigator.mediaDevices.getUserMedia({
-        video: { facingMode: frontCam ? 'user' : 'environment' },
-        audio: false
-      }).then(function(stream) {
-        var newTrack = stream.getVideoTracks()[0];
-        if (pc) {
-          var sender = pc.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
-          if (sender) sender.replaceTrack(newTrack);
-        }
-        var oldTrack = localStream.getVideoTracks()[0];
-        if (oldTrack) localStream.removeTrack(oldTrack);
-        localStream.addTrack(newTrack);
-        document.getElementById('localVideo').srcObject = localStream;
-        log('Camera flipped');
-      }).catch(function(e) {
-        log('Flip error: ' + e.message, true);
-      });
-    });
+    // Initialize typing indicator with non-breaking space
+    document.getElementById('typingIndicator').innerHTML = '&nbsp;';
   </script>
 </body>
 </html>
