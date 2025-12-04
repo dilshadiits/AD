@@ -2,14 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
   <title>Private Chat</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+    
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: linear-gradient(135deg, #1a1a2e, #16213e);
-      color: #fff; min-height: 100vh;
+      color: #fff;
     }
 
     /* Screens */
@@ -34,11 +40,16 @@
     }
 
     /* Chat Screen */
-    #chatScreen { background: #1a1a2e; }
+    #chatScreen { 
+      background: #1a1a2e;
+      height: 100%;
+    }
+    
     .chat-header {
       padding: 15px; background: rgba(0,0,0,0.5);
       display: flex; justify-content: space-between; align-items: center;
       flex-shrink: 0;
+      z-index: 10;
     }
     .chat-header h2 { font-size: 16px; }
     .chat-header .info { color: #4ade80; font-size: 13px; cursor: pointer; }
@@ -47,11 +58,27 @@
       padding: 8px 15px; border-radius: 8px; cursor: pointer;
     }
 
-    .messages {
-      flex: 1; overflow-y: auto; padding: 15px;
-      display: flex; flex-direction: column; gap: 10px;
-      min-height: 0; /* Important for flex scroll */
+    /* Messages container */
+    .messages-wrapper {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
+    
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+    
     .msg { max-width: 80%; padding: 10px 14px; border-radius: 15px; animation: fadeIn 0.2s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
     .msg.mine { align-self: flex-end; background: linear-gradient(135deg, #e94560, #ff6b6b); border-bottom-right-radius: 4px; }
@@ -67,14 +94,18 @@
     
     .msg.sys { align-self: center; background: rgba(255,255,255,0.05); color: #888; font-size: 12px; }
 
-    /* Typing Indicator - Fixed height */
+    /* Typing Indicator - absolute positioned */
     .typing-indicator { 
-      padding: 5px 15px; 
-      height: 24px;
-      min-height: 24px;
-      max-height: 24px;
-      font-size: 13px; color: #888; font-style: italic;
+      height: 20px;
+      padding: 0 15px;
+      font-size: 13px; 
+      color: #888; 
+      font-style: italic;
       flex-shrink: 0;
+      overflow: hidden;
+    }
+    .typing-indicator:empty::before {
+      content: '\00a0';
     }
     .typing-indicator .dots::after {
       content: '';
@@ -86,20 +117,27 @@
       60%, 100% { content: '...'; }
     }
 
+    /* Chat input - fixed at bottom */
     .chat-input {
-      padding: 12px; background: rgba(0,0,0,0.5);
-      display: flex; gap: 10px; align-items: center;
+      padding: 10px 12px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      gap: 10px;
+      align-items: center;
       flex-shrink: 0;
+      z-index: 10;
     }
     .chat-input input {
       flex: 1; padding: 12px 16px; border: none; border-radius: 25px;
       background: rgba(255,255,255,0.1); color: #fff; font-size: 16px;
     }
-    .chat-input input:focus { outline: none; }
+    .chat-input input:focus { outline: none; background: rgba(255,255,255,0.15); }
     .chat-input input::placeholder { color: #666; }
     .chat-input button {
       width: 45px; height: 45px; border: none; border-radius: 50%;
       display: flex; align-items: center; justify-content: center; cursor: pointer;
+      flex-shrink: 0;
     }
     .img-btn { background: rgba(255,255,255,0.2); color: #fff; font-size: 20px; }
     .send-btn { background: #e94560; color: #fff; font-size: 18px; }
@@ -179,14 +217,21 @@
       margin-bottom: 25px;
       box-shadow: 0 0 40px rgba(233, 69, 96, 0.4);
     }
+    .call-avatar.ringing {
+      animation: pulse-ring 1.5s infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.7); }
+      50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(233, 69, 96, 0); }
+    }
     .call-avatar.connected {
       animation: pulse-connected 2s infinite;
+      background: linear-gradient(135deg, #22c55e, #4ade80);
     }
     @keyframes pulse-connected {
       0%, 100% { box-shadow: 0 0 40px rgba(34, 197, 94, 0.4); }
       50% { box-shadow: 0 0 60px rgba(34, 197, 94, 0.6); }
     }
-    .call-avatar.connected { background: linear-gradient(135deg, #22c55e, #4ade80); }
     .call-name {
       font-size: 24px;
       font-weight: bold;
@@ -282,9 +327,11 @@
       </div>
       <button class="leave-btn" id="leaveBtn">Leave</button>
     </div>
-    <div class="messages" id="messages"></div>
+    <div class="messages-wrapper">
+      <div class="messages" id="messages"></div>
+    </div>
     <div class="typing-indicator" id="typingIndicator"></div>
-    <div class="chat-input">
+    <div class="chat-input" id="chatInputArea">
       <button class="img-btn" id="imgBtn">🖼️</button>
       <input type="file" id="fileInput" accept="image/*" hidden>
       <input type="text" id="msgInput" placeholder="Type a message..." maxlength="1000">
@@ -330,7 +377,7 @@
   <!-- Audio Call Screen -->
   <div class="screen" id="callScreen">
     <div class="call-container">
-      <div class="call-avatar" id="callAvatar">📞</div>
+      <div class="call-avatar ringing" id="callAvatar">📞</div>
       <div class="call-name" id="callName">User</div>
       <div class="call-status-text" id="callStatusText">Connecting...</div>
       <div class="call-timer" id="callTimer">00:00</div>
@@ -340,7 +387,7 @@
       <button class="ctrl-btn mic" id="micBtn">🎤</button>
       <button class="ctrl-btn end" id="endBtn">✕</button>
     </div>
-    <audio id="remoteAudio" autoplay></audio>
+    <audio id="remoteAudio" autoplay playsinline></audio>
   </div>
 
   <button id="debugBtn">DEBUG</button>
@@ -374,11 +421,12 @@
     var isTyping = false;
     var typingUsers = {};
     var unseenMessages = [];
-    var userScrolledUp = false; // Track if user scrolled up
+    var shouldAutoScroll = true;
 
     // WebRTC Audio Call
     var pc = null;
     var localStream = null;
+    var remoteAudioEl = document.getElementById('remoteAudio');
     var callTarget = null;
     var callTargetName = '';
     var incomingData = null;
@@ -387,6 +435,7 @@
     var speakerOff = false;
     var callTimer = null;
     var callSeconds = 0;
+    var audioContext = null;
 
     var iceServers = {
       iceServers: [
@@ -398,6 +447,69 @@
         { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
       ]
     };
+
+    // ===== KEYBOARD & VIEWPORT HANDLING =====
+    var msgInput = document.getElementById('msgInput');
+    var chatScreen = document.getElementById('chatScreen');
+    var messagesEl = document.getElementById('messages');
+    var chatInputArea = document.getElementById('chatInputArea');
+    var initialViewportHeight = window.innerHeight;
+
+    // Handle visual viewport changes (keyboard)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportResize);
+      window.visualViewport.addEventListener('scroll', handleViewportResize);
+    }
+
+    function handleViewportResize() {
+      if (!chatScreen.classList.contains('active')) return;
+      
+      var viewport = window.visualViewport;
+      var offsetTop = viewport.offsetTop;
+      var height = viewport.height;
+      
+      // Adjust chat screen to visible viewport
+      chatScreen.style.height = height + 'px';
+      chatScreen.style.transform = 'translateY(' + offsetTop + 'px)';
+      
+      // Scroll to bottom when keyboard opens
+      setTimeout(function() {
+        scrollToBottom(true);
+      }, 100);
+    }
+
+    // Focus/blur handling for input
+    msgInput.addEventListener('focus', function() {
+      log('Input focused');
+      setTimeout(function() {
+        scrollToBottom(true);
+        // Ensure input is visible
+        msgInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 300);
+    });
+
+    msgInput.addEventListener('blur', function() {
+      // Reset viewport when keyboard closes
+      setTimeout(function() {
+        if (window.visualViewport) {
+          chatScreen.style.height = '100%';
+          chatScreen.style.transform = 'none';
+        }
+      }, 100);
+    });
+
+    // Fallback for browsers without visualViewport
+    window.addEventListener('resize', function() {
+      if (!window.visualViewport) {
+        var currentHeight = window.innerHeight;
+        if (currentHeight < initialViewportHeight * 0.8) {
+          // Keyboard is likely open
+          setTimeout(function() {
+            scrollToBottom(true);
+          }, 100);
+        }
+      }
+    });
 
     // ===== SOCKET =====
     var socket = io();
@@ -427,9 +539,12 @@
       log('Joined room: ' + myRoom);
       
       document.getElementById('joinScreen').classList.remove('active');
-      document.getElementById('chatScreen').classList.add('active');
+      chatScreen.classList.add('active');
       document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
       addSystemMessage('Welcome! Tap "online" to make audio calls.');
+      
+      // Initialize audio context on user interaction
+      initAudioContext();
     });
 
     socket.on('userList', function(list) {
@@ -448,17 +563,33 @@
       updateTypingUI();
     });
 
-    // ===== SCROLL DETECTION =====
-    document.getElementById('messages').addEventListener('scroll', function() {
-      var msgs = this;
-      var threshold = 100; // pixels from bottom
-      userScrolledUp = (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight) > threshold;
+    // ===== AUDIO CONTEXT INIT =====
+    function initAudioContext() {
+      if (!audioContext) {
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+          log('AudioContext initialized: ' + audioContext.state);
+        } catch (e) {
+          log('AudioContext error: ' + e.message, true);
+        }
+      }
+    }
+
+    // ===== SCROLL HANDLING =====
+    messagesEl.addEventListener('scroll', function() {
+      var threshold = 100;
+      var distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+      shouldAutoScroll = distanceFromBottom < threshold;
     });
 
     function scrollToBottom(force) {
-      if (force || !userScrolledUp) {
-        var msgs = document.getElementById('messages');
-        msgs.scrollTop = msgs.scrollHeight;
+      if (force || shouldAutoScroll) {
+        requestAnimationFrame(function() {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
       }
     }
 
@@ -511,7 +642,7 @@
       var el = document.getElementById('typingIndicator');
       
       if (names.length === 0) {
-        el.innerHTML = '&nbsp;'; // Keep height but show nothing visible
+        el.textContent = '';
       } else if (names.length === 1) {
         el.innerHTML = names[0] + ' is typing<span class="dots"></span>';
       } else if (names.length === 2) {
@@ -540,6 +671,9 @@
       document.getElementById('incomingModal').classList.add('show');
       
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      
+      // Initialize audio context for incoming call
+      initAudioContext();
     });
 
     socket.on('callAnswered', function(data) {
@@ -612,8 +746,8 @@
       var div = document.createElement('div');
       div.className = 'msg sys';
       div.textContent = text;
-      document.getElementById('messages').appendChild(div);
-      scrollToBottom();
+      messagesEl.appendChild(div);
+      scrollToBottom(true);
     }
 
     function addMessage(data, type) {
@@ -642,9 +776,9 @@
       html += '</div>';
       
       div.innerHTML = html;
-      document.getElementById('messages').appendChild(div);
+      messagesEl.appendChild(div);
       
-      // Force scroll for own messages, respect user scroll for others
+      // Always scroll for own messages, respect shouldAutoScroll for others
       scrollToBottom(type === 'mine');
     }
 
@@ -671,11 +805,14 @@
 
     // ===== SEND MESSAGE =====
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
-    document.getElementById('msgInput').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') sendMessage();
+    msgInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendMessage();
+      }
     });
 
-    document.getElementById('msgInput').addEventListener('input', function() {
+    msgInput.addEventListener('input', function() {
       if (!isTyping) {
         isTyping = true;
         socket.emit('typing');
@@ -689,14 +826,14 @@
     });
 
     function sendMessage() {
-      var input = document.getElementById('msgInput');
-      var text = input.value.trim();
+      var text = msgInput.value.trim();
       if (text) {
         log('Sending: ' + text.slice(0, 30));
         socket.emit('message', text);
-        input.value = '';
+        msgInput.value = '';
         isTyping = false;
         socket.emit('stopTyping');
+        scrollToBottom(true);
       }
     }
 
@@ -781,11 +918,17 @@
       callTargetName = targetName;
       iceQueue = [];
 
+      // Initialize audio context
+      initAudioContext();
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+
       document.getElementById('callScreen').classList.add('active');
       document.getElementById('callName').textContent = targetName;
       document.getElementById('callStatusText').textContent = 'Calling...';
       document.getElementById('callTimer').textContent = '00:00';
-      document.getElementById('callAvatar').classList.remove('connected');
+      document.getElementById('callAvatar').className = 'call-avatar ringing';
 
       getAudio()
         .then(function() {
@@ -817,10 +960,15 @@
       log('Getting audio...');
       return navigator.mediaDevices.getUserMedia({
         video: false,
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        audio: { 
+          echoCancellation: true, 
+          noiseSuppression: true, 
+          autoGainControl: true,
+          sampleRate: 48000
+        }
       }).then(function(stream) {
         localStream = stream;
-        log('Audio ready');
+        log('Audio ready - tracks: ' + stream.getAudioTracks().length);
         return stream;
       });
     }
@@ -831,12 +979,36 @@
 
       pc.ontrack = function(e) {
         log('Got remote track: ' + e.track.kind);
-        document.getElementById('remoteAudio').srcObject = e.streams[0];
         
         if (e.track.kind === 'audio') {
-          document.getElementById('callStatusText').textContent = 'Connected';
-          document.getElementById('callAvatar').classList.add('connected');
-          startCallTimer();
+          // Set the stream to audio element
+          remoteAudioEl.srcObject = e.streams[0];
+          
+          // Ensure audio plays
+          remoteAudioEl.volume = 1.0;
+          remoteAudioEl.muted = false;
+          
+          // Try to play
+          var playPromise = remoteAudioEl.play();
+          if (playPromise !== undefined) {
+            playPromise.then(function() {
+              log('Audio playing successfully');
+              setCallConnected();
+            }).catch(function(err) {
+              log('Audio play error: ' + err.message, true);
+              // Try again with user interaction
+              document.getElementById('callStatusText').textContent = 'Tap to enable audio';
+              document.getElementById('callAvatar').onclick = function() {
+                remoteAudioEl.play().then(function() {
+                  log('Audio playing after tap');
+                  setCallConnected();
+                  document.getElementById('callAvatar').onclick = null;
+                }).catch(function(e) {
+                  log('Still failed: ' + e.message, true);
+                });
+              };
+            });
+          }
         }
       };
 
@@ -851,12 +1023,12 @@
 
       pc.oniceconnectionstatechange = function() {
         log('ICE: ' + pc.iceConnectionState);
-        if (pc.iceConnectionState === 'connected') {
-          document.getElementById('callStatusText').textContent = 'Connected';
-          document.getElementById('callAvatar').classList.add('connected');
-          startCallTimer();
+        
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          setCallConnected();
         }
         if (pc.iceConnectionState === 'failed') {
+          log('ICE failed, restarting...');
           pc.restartIce();
         }
         if (pc.iceConnectionState === 'disconnected') {
@@ -866,6 +1038,9 @@
 
       pc.onconnectionstatechange = function() {
         log('Connection: ' + pc.connectionState);
+        if (pc.connectionState === 'connected') {
+          setCallConnected();
+        }
         if (pc.connectionState === 'failed') {
           addSystemMessage('Call failed');
           cleanupCall();
@@ -873,11 +1048,19 @@
       };
     }
 
+    function setCallConnected() {
+      document.getElementById('callStatusText').textContent = 'Connected';
+      document.getElementById('callAvatar').className = 'call-avatar connected';
+      startCallTimer();
+    }
+
     function processIceQueue() {
       log('Processing ' + iceQueue.length + ' queued candidates');
       while (iceQueue.length > 0) {
         var candidate = iceQueue.shift();
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(function() {});
+        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(function(e) {
+          log('ICE add error: ' + e.message, true);
+        });
       }
     }
 
@@ -909,11 +1092,17 @@
       callTargetName = incomingData.callerName;
       iceQueue = [];
 
+      // Initialize/resume audio context
+      initAudioContext();
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+
       document.getElementById('callScreen').classList.add('active');
       document.getElementById('callName').textContent = callTargetName;
       document.getElementById('callStatusText').textContent = 'Connecting...';
       document.getElementById('callTimer').textContent = '00:00';
-      document.getElementById('callAvatar').classList.remove('connected');
+      document.getElementById('callAvatar').className = 'call-avatar ringing';
 
       getAudio()
         .then(function() {
@@ -960,7 +1149,10 @@
       if (callTarget) {
         socket.emit('endCall', { targetId: callTarget });
       }
-      addSystemMessage('Call ended (' + document.getElementById('callTimer').textContent + ')');
+      var duration = document.getElementById('callTimer').textContent;
+      if (duration !== '00:00') {
+        addSystemMessage('Call ended (' + duration + ')');
+      }
       cleanupCall();
     });
 
@@ -969,16 +1161,24 @@
       stopCallTimer();
       
       if (localStream) {
-        localStream.getTracks().forEach(function(t) { t.stop(); });
+        localStream.getTracks().forEach(function(t) { 
+          t.stop(); 
+          log('Stopped track: ' + t.kind);
+        });
         localStream = null;
       }
       if (pc) {
         pc.close();
         pc = null;
       }
-      document.getElementById('remoteAudio').srcObject = null;
+      
+      remoteAudioEl.srcObject = null;
+      remoteAudioEl.pause();
+      
       document.getElementById('callScreen').classList.remove('active');
       document.getElementById('incomingModal').classList.remove('show');
+      document.getElementById('callAvatar').onclick = null;
+      
       callTarget = null;
       callTargetName = '';
       incomingData = null;
@@ -998,19 +1198,24 @@
       localStream.getAudioTracks().forEach(function(t) { t.enabled = !micOff; });
       this.classList.toggle('off', micOff);
       this.textContent = micOff ? '🔇' : '🎤';
+      log('Mic ' + (micOff ? 'muted' : 'unmuted'));
     });
 
     // Toggle speaker
     document.getElementById('speakerBtn').addEventListener('click', function() {
-      var audio = document.getElementById('remoteAudio');
       speakerOff = !speakerOff;
-      audio.muted = speakerOff;
+      remoteAudioEl.muted = speakerOff;
       this.classList.toggle('off', speakerOff);
       this.textContent = speakerOff ? '🔈' : '🔊';
+      log('Speaker ' + (speakerOff ? 'muted' : 'unmuted'));
     });
 
-    // Initialize typing indicator with non-breaking space
-    document.getElementById('typingIndicator').innerHTML = '&nbsp;';
+    // Handle page visibility for audio
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden && remoteAudioEl.srcObject) {
+        remoteAudioEl.play().catch(function() {});
+      }
+    });
   </script>
 </body>
 </html>
