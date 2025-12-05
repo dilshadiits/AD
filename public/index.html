@@ -4,8 +4,43 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
   <title>Private Chat</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="description" content="Private chat application with audio calls">
+  <meta name="theme-color" content="#e94560">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Private Chat">
+  
+  <!-- Security Headers (should also be set server-side) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' wss: https:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+  
+  <!-- Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- Icons -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+  
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --primary: #e94560;
+      --primary-light: #ff6b6b;
+      --success: #22c55e;
+      --success-light: #4ade80;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --info: #3b82f6;
+      --bg-dark: #1a1a2e;
+      --bg-darker: #16213e;
+      --bg-card: #252547;
+      --text: #fff;
+      --text-muted: #888;
+      --border-radius: 12px;
+      --transition: 0.2s ease;
+    }
     
     html, body {
       height: 100%;
@@ -14,7 +49,42 @@
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      background: linear-gradient(135deg, var(--bg-dark), var(--bg-darker));
+      color: var(--text);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Connection Status */
+    .connection-status {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 1000;
+      transition: transform 0.3s ease;
+      transform: translateY(-100%);
+    }
+    .connection-status.show {
+      transform: translateY(0);
+    }
+    .connection-status.connecting {
+      background: var(--warning);
+      color: #000;
+    }
+    .connection-status.connected {
+      background: var(--success);
+      color: #fff;
+    }
+    .connection-status.disconnected {
+      background: var(--danger);
+      color: #fff;
+    }
+    .connection-status.reconnecting {
+      background: var(--info);
       color: #fff;
     }
 
@@ -28,35 +98,78 @@
     .join-box h1 { font-size: 3rem; margin-bottom: 20px; }
     .join-box input {
       width: 100%; padding: 15px; margin-bottom: 12px;
-      border: 2px solid rgba(255,255,255,0.1); border-radius: 12px;
-      background: rgba(255,255,255,0.1); color: #fff; font-size: 16px;
+      border: 2px solid rgba(255,255,255,0.1); border-radius: var(--border-radius);
+      background: rgba(255,255,255,0.1); color: var(--text); font-size: 16px;
+      transition: border-color var(--transition), background var(--transition);
     }
-    .join-box input:focus { outline: none; border-color: #e94560; }
-    .join-box input::placeholder { color: #888; }
+    .join-box input:focus { 
+      outline: none; 
+      border-color: var(--primary);
+      background: rgba(255,255,255,0.15);
+    }
+    .join-box input::placeholder { color: var(--text-muted); }
     .join-box button {
-      width: 100%; padding: 15px; border: none; border-radius: 12px;
-      background: linear-gradient(135deg, #e94560, #ff6b6b);
-      color: #fff; font-size: 16px; font-weight: bold; cursor: pointer;
+      width: 100%; padding: 15px; border: none; border-radius: var(--border-radius);
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      color: var(--text); font-size: 16px; font-weight: bold; cursor: pointer;
+      transition: transform var(--transition), opacity var(--transition);
+    }
+    .join-box button:active { transform: scale(0.98); }
+    .join-box button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .join-box .error-msg {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 10px;
+      min-height: 20px;
     }
 
     /* Chat Screen */
     #chatScreen { 
-      background: #1a1a2e;
+      background: var(--bg-dark);
       height: 100%;
     }
     
     .chat-header {
-      padding: 15px; background: rgba(0,0,0,0.5);
-      display: flex; justify-content: space-between; align-items: center;
+      padding: 15px; 
+      background: rgba(0,0,0,0.5);
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center;
       flex-shrink: 0;
       z-index: 10;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     .chat-header h2 { font-size: 16px; }
-    .chat-header .info { color: #4ade80; font-size: 13px; cursor: pointer; }
-    .leave-btn {
-      background: #ef4444; border: none; color: #fff;
-      padding: 8px 15px; border-radius: 8px; cursor: pointer;
+    .chat-header .info { 
+      color: var(--success-light); 
+      font-size: 13px; 
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
+    .chat-header .info .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .leave-btn {
+      background: var(--danger); 
+      border: none; 
+      color: var(--text);
+      padding: 8px 15px; 
+      border-radius: 8px; 
+      cursor: pointer;
+      transition: opacity var(--transition);
+    }
+    .leave-btn:active { opacity: 0.8; }
 
     /* Messages container */
     .messages-wrapper {
@@ -77,47 +190,120 @@
       gap: 10px;
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
+      scroll-behavior: smooth;
     }
     
-    .msg { max-width: 80%; padding: 10px 14px; border-radius: 15px; animation: fadeIn 0.2s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
-    .msg.mine { align-self: flex-end; background: linear-gradient(135deg, #e94560, #ff6b6b); border-bottom-right-radius: 4px; }
-    .msg.other { align-self: flex-start; background: rgba(255,255,255,0.1); border-bottom-left-radius: 4px; }
-    .msg .sender { font-size: 11px; color: #ffd700; margin-bottom: 4px; }
-    .msg .text { font-size: 15px; word-break: break-word; }
-    .msg .text img { max-width: 200px; border-radius: 8px; margin-top: 5px; cursor: pointer; }
+    .msg { 
+      max-width: 80%; 
+      padding: 10px 14px; 
+      border-radius: 15px; 
+      animation: fadeIn 0.2s ease;
+      position: relative;
+      word-wrap: break-word;
+    }
+    @keyframes fadeIn { 
+      from { opacity: 0; transform: translateY(10px); } 
+      to { opacity: 1; } 
+    }
+    .msg.mine { 
+      align-self: flex-end; 
+      background: linear-gradient(135deg, var(--primary), var(--primary-light)); 
+      border-bottom-right-radius: 4px; 
+    }
+    .msg.other { 
+      align-self: flex-start; 
+      background: rgba(255,255,255,0.1); 
+      border-bottom-left-radius: 4px; 
+    }
+    .msg .sender { 
+      font-size: 11px; 
+      color: #ffd700; 
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+    .msg .text { 
+      font-size: 15px; 
+      word-break: break-word;
+      line-height: 1.4;
+    }
+    .msg .text img { 
+      max-width: 200px; 
+      max-height: 200px;
+      border-radius: 8px; 
+      margin-top: 5px; 
+      cursor: pointer;
+      display: block;
+    }
     
-    .msg .meta { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 5px; }
-    .msg .time { font-size: 10px; color: rgba(255,255,255,0.5); }
-    .msg .ticks { font-size: 14px; font-weight: bold; color: rgba(255,255,255,0.5); transition: color 0.3s; }
-    .msg .ticks.seen { color: #4ade80; }
+    .msg .meta { 
+      display: flex; 
+      align-items: center; 
+      justify-content: flex-end; 
+      gap: 6px; 
+      margin-top: 5px; 
+    }
+    .msg .time { 
+      font-size: 10px; 
+      color: rgba(255,255,255,0.5); 
+    }
+    .msg .ticks { 
+      font-size: 12px; 
+      color: rgba(255,255,255,0.5); 
+      transition: color 0.3s; 
+    }
+    .msg .ticks.seen { color: var(--success-light); }
+    .msg .ticks.delivered { color: rgba(255,255,255,0.7); }
     
-    .msg.sys { align-self: center; background: rgba(255,255,255,0.05); color: #888; font-size: 12px; }
+    .msg.sys { 
+      align-self: center; 
+      background: rgba(255,255,255,0.05); 
+      color: var(--text-muted); 
+      font-size: 12px;
+      padding: 6px 12px;
+    }
 
-    /* Typing Indicator - absolute positioned */
+    /* Message highlight animation (for notification clicks) */
+    @keyframes highlight {
+      0%, 100% { background: inherit; }
+      50% { background: rgba(233, 69, 96, 0.3); }
+    }
+
+    /* Typing Indicator */
     .typing-indicator { 
-      height: 20px;
+      height: 24px;
       padding: 0 15px;
       font-size: 13px; 
-      color: #888; 
+      color: var(--text-muted); 
       font-style: italic;
       flex-shrink: 0;
       overflow: hidden;
+      display: flex;
+      align-items: center;
     }
     .typing-indicator:empty::before {
       content: '\00a0';
     }
-    .typing-indicator .dots::after {
-      content: '';
-      animation: typingDots 1.4s infinite;
+    .typing-dots {
+      display: inline-flex;
+      gap: 3px;
+      margin-left: 5px;
     }
-    @keyframes typingDots {
-      0%, 20% { content: '.'; }
-      40% { content: '..'; }
-      60%, 100% { content: '...'; }
+    .typing-dots span {
+      width: 4px;
+      height: 4px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: typingBounce 1.4s infinite ease-in-out;
+    }
+    .typing-dots span:nth-child(1) { animation-delay: 0s; }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-4px); }
     }
 
-    /* Chat input - fixed at bottom */
+    /* Chat input */
     .chat-input {
       padding: 10px 12px;
       padding-bottom: max(10px, env(safe-area-inset-bottom));
@@ -127,75 +313,185 @@
       align-items: center;
       flex-shrink: 0;
       z-index: 10;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
     .chat-input input {
-      flex: 1; padding: 12px 16px; border: none; border-radius: 25px;
-      background: rgba(255,255,255,0.1); color: #fff; font-size: 16px;
+      flex: 1; 
+      padding: 12px 16px; 
+      border: none; 
+      border-radius: 25px;
+      background: rgba(255,255,255,0.1); 
+      color: var(--text); 
+      font-size: 16px;
+      transition: background var(--transition);
     }
-    .chat-input input:focus { outline: none; background: rgba(255,255,255,0.15); }
+    .chat-input input:focus { 
+      outline: none; 
+      background: rgba(255,255,255,0.15); 
+    }
     .chat-input input::placeholder { color: #666; }
     .chat-input button {
-      width: 45px; height: 45px; border: none; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center; cursor: pointer;
+      width: 45px; 
+      height: 45px; 
+      border: none; 
+      border-radius: 50%;
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      cursor: pointer;
       flex-shrink: 0;
+      transition: transform var(--transition), opacity var(--transition);
     }
-    .img-btn { background: rgba(255,255,255,0.2); color: #fff; font-size: 20px; }
-    .send-btn { background: #e94560; color: #fff; font-size: 18px; }
+    .chat-input button:active { transform: scale(0.95); }
+    .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .img-btn { background: rgba(255,255,255,0.2); color: var(--text); font-size: 20px; }
+    .send-btn { background: var(--primary); color: var(--text); font-size: 18px; }
 
     /* User Modal */
     .modal { 
-      position: fixed; inset: 0; background: rgba(0,0,0,0.9);
-      display: none; align-items: center; justify-content: center; z-index: 100;
+      position: fixed; 
+      inset: 0; 
+      background: rgba(0,0,0,0.9);
+      display: none; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 100;
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
     }
     .modal.show { display: flex; }
     .modal-content {
-      background: #252547; border-radius: 16px; padding: 20px;
-      width: 90%; max-width: 350px; max-height: 70%; overflow-y: auto;
+      background: var(--bg-card); 
+      border-radius: 16px; 
+      padding: 20px;
+      width: 90%; 
+      max-width: 350px; 
+      max-height: 70%; 
+      overflow-y: auto;
     }
-    .modal-content h3 { text-align: center; margin-bottom: 15px; }
+    .modal-content h3 { 
+      text-align: center; 
+      margin-bottom: 15px; 
+    }
     .user-item {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 12px; background: rgba(255,255,255,0.05); border-radius: 10px; margin-bottom: 10px;
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center;
+      padding: 12px; 
+      background: rgba(255,255,255,0.05); 
+      border-radius: 10px; 
+      margin-bottom: 10px;
     }
-    .user-item .name { font-size: 15px; }
-    .user-item.me .name { color: #888; }
+    .user-item .name { 
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .user-item .name .online-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .user-item .name .offline-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .user-item.me .name { color: var(--text-muted); }
     .call-btn {
-      background: #22c55e; border: none; color: #fff;
-      padding: 8px 16px; border-radius: 20px; font-size: 13px; cursor: pointer;
+      background: var(--success); 
+      border: none; 
+      color: var(--text);
+      padding: 8px 16px; 
+      border-radius: 20px; 
+      font-size: 13px; 
+      cursor: pointer;
+      transition: opacity var(--transition);
+    }
+    .call-btn:disabled {
+      background: var(--text-muted);
+      cursor: not-allowed;
     }
     .close-btn {
-      width: 100%; padding: 12px; margin-top: 10px;
-      background: #444; border: none; border-radius: 10px; color: #fff; cursor: pointer;
+      width: 100%; 
+      padding: 12px; 
+      margin-top: 10px;
+      background: #444; 
+      border: none; 
+      border-radius: 10px; 
+      color: var(--text); 
+      cursor: pointer;
     }
 
     /* Image Preview Modal */
     .preview-modal {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.95);
-      display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100;
+      position: fixed; 
+      inset: 0; 
+      background: rgba(0,0,0,0.95);
+      display: none; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 100;
     }
     .preview-modal.show { display: flex; }
-    .preview-modal img { max-width: 90%; max-height: 60%; border-radius: 10px; }
-    .preview-modal .btns { display: flex; gap: 15px; margin-top: 20px; }
-    .preview-modal button { padding: 12px 30px; border: none; border-radius: 25px; font-size: 16px; cursor: pointer; }
-    .preview-modal .cancel { background: #444; color: #fff; }
-    .preview-modal .send { background: #e94560; color: #fff; }
+    .preview-modal img { 
+      max-width: 90%; 
+      max-height: 60%; 
+      border-radius: 10px; 
+    }
+    .preview-modal .btns { 
+      display: flex; 
+      gap: 15px; 
+      margin-top: 20px; 
+    }
+    .preview-modal button { 
+      padding: 12px 30px; 
+      border: none; 
+      border-radius: 25px; 
+      font-size: 16px; 
+      cursor: pointer; 
+    }
+    .preview-modal .cancel { background: #444; color: var(--text); }
+    .preview-modal .send { background: var(--primary); color: var(--text); }
 
     /* Full Image Modal */
     .fullimg-modal {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.98);
-      display: none; align-items: center; justify-content: center; z-index: 150;
+      position: fixed; 
+      inset: 0; 
+      background: rgba(0,0,0,0.98);
+      display: none; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 150;
     }
     .fullimg-modal.show { display: flex; }
-    .fullimg-modal img { max-width: 95%; max-height: 90%; object-fit: contain; }
+    .fullimg-modal img { 
+      max-width: 95%; 
+      max-height: 90%; 
+      object-fit: contain; 
+    }
     .fullimg-modal .close-full {
-      position: absolute; top: 20px; right: 20px;
-      background: rgba(255,255,255,0.2); border: none; color: #fff;
-      width: 40px; height: 40px; border-radius: 50%; font-size: 24px; cursor: pointer;
+      position: absolute; 
+      top: 20px; 
+      right: 20px;
+      background: rgba(255,255,255,0.2); 
+      border: none; 
+      color: var(--text);
+      width: 40px; 
+      height: 40px; 
+      border-radius: 50%; 
+      font-size: 24px; 
+      cursor: pointer;
     }
 
     /* Audio Call Screen */
     #callScreen { 
-      background: linear-gradient(135deg, #1a1a2e, #16213e); 
+      background: linear-gradient(135deg, var(--bg-dark), var(--bg-darker)); 
       z-index: 200; 
       align-items: center;
       justify-content: center;
@@ -209,10 +505,13 @@
       width: 100%;
     }
     .call-avatar {
-      width: 120px; height: 120px;
-      background: linear-gradient(135deg, #e94560, #ff6b6b);
+      width: 120px; 
+      height: 120px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
       border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
       font-size: 60px;
       margin-bottom: 25px;
       box-shadow: 0 0 40px rgba(233, 69, 96, 0.4);
@@ -226,7 +525,7 @@
     }
     .call-avatar.connected {
       animation: pulse-connected 2s infinite;
-      background: linear-gradient(135deg, #22c55e, #4ade80);
+      background: linear-gradient(135deg, var(--success), var(--success-light));
     }
     @keyframes pulse-connected {
       0%, 100% { box-shadow: 0 0 40px rgba(34, 197, 94, 0.4); }
@@ -239,82 +538,185 @@
     }
     .call-status-text {
       font-size: 16px;
-      color: #888;
+      color: var(--text-muted);
       margin-bottom: 10px;
     }
     .call-timer {
       font-size: 18px;
-      color: #4ade80;
+      color: var(--success-light);
       font-family: monospace;
       margin-bottom: 40px;
     }
     .call-controls {
-      display: flex; justify-content: center; gap: 30px; padding: 25px;
+      display: flex; 
+      justify-content: center; 
+      gap: 30px; 
+      padding: 25px;
       position: absolute;
       bottom: 50px;
     }
     .ctrl-btn {
-      width: 60px; height: 60px; border-radius: 50%; border: none;
-      display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 24px;
-      transition: transform 0.2s, background 0.2s;
+      width: 60px; 
+      height: 60px; 
+      border-radius: 50%; 
+      border: none;
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+      cursor: pointer; 
+      font-size: 24px;
+      transition: transform var(--transition), background var(--transition);
     }
     .ctrl-btn:active { transform: scale(0.95); }
-    .ctrl-btn.end { background: #ef4444; }
-    .ctrl-btn.mic { background: #3b82f6; }
+    .ctrl-btn.end { background: var(--danger); }
+    .ctrl-btn.mic { background: var(--info); }
     .ctrl-btn.speaker { background: #8b5cf6; }
     .ctrl-btn.off { background: #666; }
 
     /* Incoming Call */
     .incoming-modal {
-      position: fixed; inset: 0; background: linear-gradient(135deg, #1a1a2e, #16213e);
-      display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 300;
+      position: fixed; 
+      inset: 0; 
+      background: linear-gradient(135deg, var(--bg-dark), var(--bg-darker));
+      display: none; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 300;
     }
     .incoming-modal.show { display: flex; }
     .incoming-modal .avatar {
-      width: 100px; height: 100px; background: linear-gradient(135deg, #22c55e, #4ade80);
-      border-radius: 50%; display: flex; align-items: center; justify-content: center;
-      font-size: 50px; margin-bottom: 20px; animation: pulse 1.5s infinite;
+      width: 100px; 
+      height: 100px; 
+      background: linear-gradient(135deg, var(--success), var(--success-light));
+      border-radius: 50%; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      font-size: 50px; 
+      margin-bottom: 20px; 
+      animation: pulse 1.5s infinite;
     }
     @keyframes pulse {
       0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
       50% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(34, 197, 94, 0); }
     }
     .incoming-modal h2 { margin-bottom: 10px; }
-    .incoming-modal p { color: #888; margin-bottom: 40px; }
+    .incoming-modal p { color: var(--text-muted); margin-bottom: 40px; }
     .incoming-modal .btns { display: flex; gap: 50px; }
     .incoming-modal .btns button {
-      width: 65px; height: 65px; border-radius: 50%; border: none; cursor: pointer; font-size: 28px;
+      width: 65px; 
+      height: 65px; 
+      border-radius: 50%; 
+      border: none; 
+      cursor: pointer; 
+      font-size: 28px;
+      transition: transform var(--transition);
     }
-    .incoming-modal .accept { background: #22c55e; }
-    .incoming-modal .reject { background: #ef4444; }
+    .incoming-modal .btns button:active { transform: scale(0.95); }
+    .incoming-modal .accept { background: var(--success); }
+    .incoming-modal .reject { background: var(--danger); }
+
+    /* Network Quality Indicator */
+    .network-quality {
+      position: absolute;
+      top: 80px;
+      right: 20px;
+      display: flex;
+      gap: 2px;
+      align-items: flex-end;
+    }
+    .network-quality .bar {
+      width: 4px;
+      background: var(--success);
+      border-radius: 2px;
+      transition: height 0.3s, background 0.3s;
+    }
+    .network-quality .bar:nth-child(1) { height: 6px; }
+    .network-quality .bar:nth-child(2) { height: 10px; }
+    .network-quality .bar:nth-child(3) { height: 14px; }
+    .network-quality .bar:nth-child(4) { height: 18px; }
+    .network-quality.poor .bar { background: var(--danger); }
+    .network-quality.fair .bar:nth-child(3),
+    .network-quality.fair .bar:nth-child(4) { background: var(--text-muted); }
+    .network-quality.poor .bar:nth-child(2),
+    .network-quality.poor .bar:nth-child(3),
+    .network-quality.poor .bar:nth-child(4) { background: var(--text-muted); }
 
     /* Debug */
     #debug {
-      position: fixed; bottom: 70px; left: 5px; right: 5px;
-      background: rgba(0,0,0,0.95); border: 1px solid #333; border-radius: 8px;
-      padding: 8px; font-size: 10px; max-height: 120px; overflow-y: auto;
-      font-family: monospace; display: none; z-index: 999;
+      position: fixed; 
+      bottom: 70px; 
+      left: 5px; 
+      right: 5px;
+      background: rgba(0,0,0,0.95); 
+      border: 1px solid #333; 
+      border-radius: 8px;
+      padding: 8px; 
+      font-size: 10px; 
+      max-height: 150px; 
+      overflow-y: auto;
+      font-family: monospace; 
+      display: none; 
+      z-index: 999;
     }
     #debug.show { display: block; }
     #debug .log { color: #0f0; margin: 2px 0; }
-    #debug .err { color: #f55; }
+    #debug .warn { color: #ff0; margin: 2px 0; }
+    #debug .err { color: #f55; margin: 2px 0; }
     #debugBtn {
-      position: fixed; bottom: 72px; right: 5px; background: #333; color: #fff;
-      border: none; padding: 5px 10px; border-radius: 5px; font-size: 10px; z-index: 1000; cursor: pointer;
+      position: fixed; 
+      bottom: 72px; 
+      right: 5px; 
+      background: #333; 
+      color: var(--text);
+      border: none; 
+      padding: 5px 10px; 
+      border-radius: 5px; 
+      font-size: 10px; 
+      z-index: 1000; 
+      cursor: pointer;
+    }
+
+    /* Offline indicator */
+    .offline-banner {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--warning);
+      color: #000;
+      padding: 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+      z-index: 1001;
+    }
+    .offline-banner.show {
+      transform: translateY(0);
     }
   </style>
 </head>
 <body>
+
+  <!-- Connection Status -->
+  <div class="connection-status" id="connectionStatus">Connecting...</div>
+
+  <!-- Offline Banner -->
+  <div class="offline-banner" id="offlineBanner">You are offline. Messages will be sent when connection is restored.</div>
 
   <!-- Join Screen -->
   <div class="screen active" id="joinScreen">
     <div class="join-box">
       <h1>🔐</h1>
       <h2 style="margin-bottom: 10px;">Private Chat</h2>
-      <p style="color: #888; margin-bottom: 20px;">Chat & Audio Calls</p>
-      <input type="text" id="nameInput" placeholder="Your name" maxlength="20">
-      <input type="text" id="roomInput" placeholder="Room code" maxlength="30">
+      <p style="color: var(--text-muted); margin-bottom: 20px;">Secure Chat & Audio Calls</p>
+      <input type="text" id="nameInput" placeholder="Your name" maxlength="20" autocomplete="off" autocapitalize="words">
+      <input type="text" id="roomInput" placeholder="Room code" maxlength="30" autocomplete="off" autocapitalize="off">
       <button id="joinBtn">Join Room</button>
+      <div class="error-msg" id="joinError"></div>
     </div>
   </div>
 
@@ -323,7 +725,10 @@
     <div class="chat-header">
       <div>
         <h2 id="roomTitle">Room</h2>
-        <div class="info" id="userInfo">👥 0 online - tap to call</div>
+        <div class="info" id="userInfo">
+          <span class="status-dot"></span>
+          <span id="userCount">0 online</span>
+        </div>
       </div>
       <button class="leave-btn" id="leaveBtn">Leave</button>
     </div>
@@ -332,10 +737,10 @@
     </div>
     <div class="typing-indicator" id="typingIndicator"></div>
     <div class="chat-input" id="chatInputArea">
-      <button class="img-btn" id="imgBtn">🖼️</button>
+      <button class="img-btn" id="imgBtn" aria-label="Send image">🖼️</button>
       <input type="file" id="fileInput" accept="image/*" hidden>
-      <input type="text" id="msgInput" placeholder="Type a message..." maxlength="1000">
-      <button class="send-btn" id="sendBtn">➤</button>
+      <input type="text" id="msgInput" placeholder="Type a message..." maxlength="1000" autocomplete="off" enterkeyhint="send">
+      <button class="send-btn" id="sendBtn" aria-label="Send message">➤</button>
     </div>
   </div>
 
@@ -350,7 +755,7 @@
 
   <!-- Image Preview Modal -->
   <div class="preview-modal" id="previewModal">
-    <img id="previewImg" src="">
+    <img id="previewImg" src="" alt="Preview">
     <div class="btns">
       <button class="cancel" id="cancelImg">Cancel</button>
       <button class="send" id="confirmImg">Send</button>
@@ -359,8 +764,8 @@
 
   <!-- Full Image Modal -->
   <div class="fullimg-modal" id="fullImgModal">
-    <button class="close-full" id="closeFullImg">×</button>
-    <img id="fullImg" src="">
+    <button class="close-full" id="closeFullImg" aria-label="Close">×</button>
+    <img id="fullImg" src="" alt="Full size">
   </div>
 
   <!-- Incoming Call Modal -->
@@ -369,8 +774,8 @@
     <h2>Incoming Audio Call</h2>
     <p id="callerName">Someone is calling...</p>
     <div class="btns">
-      <button class="reject" id="rejectBtn">✕</button>
-      <button class="accept" id="acceptBtn">✓</button>
+      <button class="reject" id="rejectBtn" aria-label="Reject call">✕</button>
+      <button class="accept" id="acceptBtn" aria-label="Accept call">✓</button>
     </div>
   </div>
 
@@ -381,11 +786,17 @@
       <div class="call-name" id="callName">User</div>
       <div class="call-status-text" id="callStatusText">Connecting...</div>
       <div class="call-timer" id="callTimer">00:00</div>
+      <div class="network-quality" id="networkQuality">
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+      </div>
     </div>
     <div class="call-controls">
-      <button class="ctrl-btn speaker" id="speakerBtn">🔊</button>
-      <button class="ctrl-btn mic" id="micBtn">🎤</button>
-      <button class="ctrl-btn end" id="endBtn">✕</button>
+      <button class="ctrl-btn speaker" id="speakerBtn" aria-label="Toggle speaker">🔊</button>
+      <button class="ctrl-btn mic" id="micBtn" aria-label="Toggle microphone">🎤</button>
+      <button class="ctrl-btn end" id="endBtn" aria-label="End call">✕</button>
     </div>
     <audio id="remoteAudio" autoplay playsinline></audio>
   </div>
@@ -395,67 +806,514 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    // ===== DEBUG =====
-    var debugEl = document.getElementById('debug');
-    document.getElementById('debugBtn').addEventListener('click', function() {
-      debugEl.classList.toggle('show');
-    });
+    'use strict';
+    
+    // ===== DEBUG LOGGER =====
+    const debugEl = document.getElementById('debug');
+    const debugBtn = document.getElementById('debugBtn');
+    
+    debugBtn.addEventListener('click', () => debugEl.classList.toggle('show'));
 
-    function log(msg, isErr) {
+    function log(msg, level = 'log') {
       console.log(msg);
-      var div = document.createElement('div');
-      div.className = isErr ? 'err' : 'log';
-      div.textContent = new Date().toLocaleTimeString().slice(0,5) + ' ' + msg;
+      const div = document.createElement('div');
+      div.className = level;
+      div.textContent = new Date().toLocaleTimeString().slice(0, 8) + ' ' + msg;
       debugEl.appendChild(div);
-      debugEl.scrollTop = 999999;
-      if (debugEl.children.length > 100) debugEl.firstChild.remove();
+      debugEl.scrollTop = debugEl.scrollHeight;
+      if (debugEl.children.length > 200) debugEl.firstChild.remove();
     }
 
     // ===== STATE =====
-    var myName = '';
-    var myRoom = '';
-    var myId = '';
-    var users = [];
-    var pendingImage = null;
-    var typingTimeout = null;
-    var isTyping = false;
-    var typingUsers = {};
-    var unseenMessages = [];
-    var shouldAutoScroll = true;
+    let myName = '';
+    let myRoom = '';
+    let myId = '';
+    let mySessionId = localStorage.getItem('chatSessionId') || '';
+    let users = [];
+    let pendingImage = null;
+    let typingTimeout = null;
+    let isTyping = false;
+    const typingUsers = new Map();
+    let unseenMessages = [];
+    let shouldAutoScroll = true;
+    let messageQueue = [];
+    let isConnected = false;
+    let isOnline = navigator.onLine;
 
-    // WebRTC Audio Call
-    var pc = null;
-    var localStream = null;
-    var remoteAudioEl = document.getElementById('remoteAudio');
-    var callTarget = null;
-    var callTargetName = '';
-    var incomingData = null;
-    var iceQueue = [];
-    var micOff = false;
-    var speakerOff = false;
-    var callTimer = null;
-    var callSeconds = 0;
-    var audioContext = null;
+    // WebRTC State
+    let pc = null;
+    let localStream = null;
+    let callTarget = null;
+    let callTargetName = '';
+    let incomingData = null;
+    let iceQueue = [];
+    let micOff = false;
+    let speakerOff = false;
+    let callTimer = null;
+    let callSeconds = 0;
+    let audioContext = null;
+    let iceServers = null;
+    let statsInterval = null;
 
-    var iceServers = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-      ]
-    };
+    // DOM Elements
+    const remoteAudioEl = document.getElementById('remoteAudio');
+    const msgInput = document.getElementById('msgInput');
+    const chatScreen = document.getElementById('chatScreen');
+    const messagesEl = document.getElementById('messages');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const joinError = document.getElementById('joinError');
+    const offlineBanner = document.getElementById('offlineBanner');
+
+    // ===== ONLINE/OFFLINE HANDLERS =====
+    window.addEventListener('online', () => {
+      log('App is online');
+      isOnline = true;
+      offlineBanner.classList.remove('show');
+      
+      // Reconnect socket if needed
+      if (!socket.connected) {
+        socket.connect();
+      }
+    });
+
+    window.addEventListener('offline', () => {
+      log('App is offline', 'warn');
+      isOnline = false;
+      offlineBanner.classList.add('show');
+    });
+
+    // ===== FETCH ICE SERVERS =====
+    async function fetchIceServers() {
+      try {
+        const response = await fetch('/api/ice-servers');
+        const data = await response.json();
+        iceServers = data;
+        log('ICE servers loaded: ' + data.iceServers.length + ' servers');
+      } catch (err) {
+        log('Failed to fetch ICE servers, using defaults', 'warn');
+        // Updated TURN servers with better reliability
+        iceServers = {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            // Public TURN servers (for testing - use your own in production)
+            { 
+              urls: 'turn:openrelay.metered.ca:80', 
+              username: 'openrelayproject', 
+              credential: 'openrelayproject' 
+            },
+            { 
+              urls: 'turn:openrelay.metered.ca:443', 
+              username: 'openrelayproject', 
+              credential: 'openrelayproject' 
+            },
+            { 
+              urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
+              username: 'openrelayproject', 
+              credential: 'openrelayproject' 
+            }
+          ],
+          iceCandidatePoolSize: 10
+        };
+      }
+    }
+
+    // Load ICE servers on page load
+    fetchIceServers();
+
+    // ===== SOCKET.IO CONNECTION (v4.8+ compatible) =====
+    const socket = io({
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      transports: ['websocket', 'polling'],
+      // Socket.IO 4.8+ feature: try all transports if first fails
+      // tryAllTransports: true, // Uncomment if using Socket.IO 4.8+
+      upgrade: true,
+      rememberUpgrade: true
+    });
+
+    // ===== CONNECTION STATUS UI =====
+    function showConnectionStatus(status, message) {
+      connectionStatus.textContent = message;
+      connectionStatus.className = 'connection-status show ' + status;
+      
+      if (status === 'connected') {
+        setTimeout(() => {
+          connectionStatus.classList.remove('show');
+        }, 2000);
+      }
+    }
+
+    // ===== SOCKET EVENT HANDLERS =====
+    socket.on('connect', () => {
+      myId = socket.id;
+      isConnected = true;
+      log('Connected: ' + myId);
+      showConnectionStatus('connected', 'Connected');
+      
+      // Try to rejoin if we have session data
+      if (mySessionId && myRoom && myName) {
+        log('Attempting to rejoin...');
+        socket.emit('rejoin', {
+          sessionId: mySessionId,
+          roomCode: myRoom,
+          username: myName
+        });
+      }
+      
+      // Send queued messages
+      while (messageQueue.length > 0 && isConnected) {
+        const msg = messageQueue.shift();
+        socket.emit(msg.type, msg.data);
+      }
+    });
+
+    socket.on('disconnect', (reason) => {
+      isConnected = false;
+      log('Disconnected: ' + reason, 'warn');
+      showConnectionStatus('disconnected', 'Disconnected - ' + reason);
+    });
+
+    socket.on('connect_error', (error) => {
+      log('Connection error: ' + error.message, 'err');
+      showConnectionStatus('disconnected', 'Connection failed');
+    });
+
+    socket.io.on('reconnect_attempt', (attempt) => {
+      log('Reconnection attempt: ' + attempt, 'warn');
+      showConnectionStatus('reconnecting', 'Reconnecting... (' + attempt + ')');
+    });
+
+    socket.io.on('reconnect', (attempt) => {
+      log('Reconnected after ' + attempt + ' attempts');
+      showConnectionStatus('connected', 'Reconnected');
+    });
+
+    socket.io.on('reconnect_failed', () => {
+      log('Reconnection failed', 'err');
+      showConnectionStatus('disconnected', 'Connection lost. Please refresh.');
+    });
+
+    socket.on('yourSocketId', (id) => {
+      myId = id;
+      log('Socket ID: ' + id);
+    });
+
+    socket.on('error', (err) => {
+      const message = typeof err === 'string' ? err : err.message;
+      log('Error: ' + message, 'err');
+      
+      if (err.type === 'duplicate' || err.type === 'validation') {
+        joinError.textContent = message;
+      } else {
+        alert(message);
+      }
+    });
+
+    socket.on('joinSuccess', (data) => {
+      myRoom = data.room;
+      myName = data.username;
+      myId = data.socketId;
+      mySessionId = data.sessionId;
+      
+      // Store session for reconnection
+      localStorage.setItem('chatSessionId', mySessionId);
+      localStorage.setItem('chatRoom', myRoom);
+      localStorage.setItem('chatName', myName);
+      
+      log('Joined room: ' + myRoom);
+      
+      document.getElementById('joinScreen').classList.remove('active');
+      chatScreen.classList.add('active');
+      document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
+      addSystemMessage('Welcome! Tap user count to make audio calls.');
+      
+      initAudioContext();
+      requestNotificationPermission();
+    });
+
+    socket.on('rejoinSuccess', (data) => {
+      myRoom = data.room;
+      myName = data.username;
+      myId = data.socketId;
+      mySessionId = data.sessionId;
+      
+      log('Rejoined room: ' + myRoom);
+      addSystemMessage('Reconnected to room');
+      
+      if (!chatScreen.classList.contains('active')) {
+        document.getElementById('joinScreen').classList.remove('active');
+        chatScreen.classList.add('active');
+        document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
+      }
+    });
+
+    socket.on('rejoinFailed', (data) => {
+      log('Rejoin failed: ' + data.message, 'warn');
+      // Clear stored session
+      localStorage.removeItem('chatSessionId');
+      localStorage.removeItem('chatRoom');
+      localStorage.removeItem('chatName');
+      mySessionId = '';
+    });
+
+    socket.on('messageHistory', (messages) => {
+      log('Received ' + messages.length + ' history messages');
+      messages.forEach(data => {
+        if (data.type === 'image' && data.imageData === '[IMAGE]') return;
+        const isMine = data.senderId === myId;
+        addMessage(data, isMine ? 'mine' : 'other', true);
+      });
+      scrollToBottom(true);
+    });
+
+    socket.on('userList', (list) => {
+      users = list;
+      const onlineCount = list.filter(u => u.online !== false).length;
+      document.getElementById('userCount').textContent = onlineCount + ' online';
+      log('Users updated: ' + list.map(u => u.username + (u.online === false ? '(offline)' : '')).join(', '));
+    });
+
+    socket.on('userJoined', (data) => {
+      addSystemMessage(data.username + ' joined');
+    });
+
+    socket.on('userLeft', (data) => {
+      addSystemMessage(data.username + ' left');
+      typingUsers.delete(data.socketId);
+      updateTypingUI();
+    });
+
+    socket.on('userOffline', (data) => {
+      typingUsers.delete(data.socketId);
+      updateTypingUI();
+    });
+
+    // ===== MESSAGE HANDLERS =====
+    socket.on('message', (data) => {
+      const isMine = data.senderId === myId;
+      addMessage(data, isMine ? 'mine' : 'other');
+      
+      if (!isMine) {
+        typingUsers.delete(data.senderId);
+        updateTypingUI();
+        
+        if (document.hasFocus() && shouldAutoScroll) {
+          socket.emit('markSeen', [data.id]);
+        } else {
+          unseenMessages.push(data.id);
+          
+          // Show notification when app is not focused
+          if (!document.hasFocus()) {
+            showLocalNotification(
+              data.username,
+              data.type === 'image' ? '📷 Sent an image' : data.text.slice(0, 100),
+              { messageId: data.id, roomCode: myRoom }
+            );
+          }
+        }
+      }
+    });
+
+    socket.on('messageSeen', (data) => {
+      const tickEl = document.getElementById('tick-' + data.messageId);
+      if (tickEl && !tickEl.classList.contains('seen')) {
+        tickEl.textContent = '✓✓';
+        tickEl.classList.remove('delivered');
+        tickEl.classList.add('seen');
+        log('Message seen by ' + data.seenBy);
+      }
+    });
+
+    // ===== TYPING INDICATORS =====
+    socket.on('typing', (data) => {
+      typingUsers.set(data.socketId, { username: data.username, timestamp: Date.now() });
+      updateTypingUI();
+      
+      // Auto-remove after 3 seconds
+      setTimeout(() => {
+        const user = typingUsers.get(data.socketId);
+        if (user && Date.now() - user.timestamp > 2500) {
+          typingUsers.delete(data.socketId);
+          updateTypingUI();
+        }
+      }, 3000);
+    });
+
+    socket.on('stopTyping', (data) => {
+      typingUsers.delete(data.socketId);
+      updateTypingUI();
+    });
+
+    function updateTypingUI() {
+      const names = Array.from(typingUsers.values()).map(u => u.username);
+      const el = document.getElementById('typingIndicator');
+      
+      if (names.length === 0) {
+        el.innerHTML = '';
+      } else {
+        const text = names.length === 1 
+          ? names[0] + ' is typing'
+          : names.length === 2 
+            ? names[0] + ' and ' + names[1] + ' are typing'
+            : names.length + ' people are typing';
+        el.innerHTML = text + '<span class="typing-dots"><span></span><span></span><span></span></span>';
+      }
+    }
+
+    // ===== FOCUS HANDLER =====
+    window.addEventListener('focus', () => {
+      if (unseenMessages.length > 0) {
+        socket.emit('markSeen', unseenMessages);
+        unseenMessages = [];
+      }
+    });
+
+    // ===== HEARTBEAT =====
+    setInterval(() => {
+      if (isConnected && myRoom) {
+        socket.emit('heartbeat');
+      }
+    }, 30000);
+
+    socket.on('heartbeat_ack', () => {
+      // Heartbeat acknowledged
+    });
+
+    // ===== WEBRTC SIGNALING =====
+    socket.on('incomingCall', (data) => {
+      log('📞 Incoming call from: ' + data.callerName);
+      
+      if (document.getElementById('callScreen').classList.contains('active')) {
+        socket.emit('rejectCall', { targetId: data.callerId });
+        return;
+      }
+      
+      incomingData = data;
+      document.getElementById('callerName').textContent = data.callerName + ' is calling...';
+      document.getElementById('incomingModal').classList.add('show');
+      
+      // Show notification if not focused
+      if (!document.hasFocus()) {
+        showLocalNotification('📞 Incoming Call', data.callerName + ' is calling...', { type: 'call' });
+      }
+      
+      if (navigator.vibrate) {
+        navigator.vibrate([200, 100, 200, 100, 200]);
+      }
+      
+      initAudioContext();
+    });
+
+    socket.on('callAnswered', async (data) => {
+      log('Call answered!');
+      if (pc && pc.signalingState !== 'closed') {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          log('Remote description set');
+          processIceQueue();
+        } catch (e) {
+          log('Error setting remote description: ' + e.message, 'err');
+        }
+      }
+    });
+
+    socket.on('iceCandidate', (data) => {
+      log('Received ICE candidate from ' + data.from);
+      
+      if (!pc || pc.signalingState === 'closed') {
+        iceQueue.push(data.candidate);
+        return;
+      }
+      
+      if (!pc.remoteDescription || !pc.remoteDescription.type) {
+        iceQueue.push(data.candidate);
+        return;
+      }
+      
+      addIceCandidate(data.candidate);
+    });
+
+    socket.on('callEnded', (data) => {
+      log('Call ended by ' + (data.username || 'remote'));
+      addSystemMessage('Call ended');
+      cleanupCall();
+    });
+
+    socket.on('callRejected', (data) => {
+      log('Call rejected by ' + (data.username || 'remote'));
+      addSystemMessage('Call declined');
+      cleanupCall();
+    });
+
+    socket.on('callTimeout', (data) => {
+      log('Call timeout');
+      addSystemMessage('No answer');
+      cleanupCall();
+    });
+
+    socket.on('callCancelled', (data) => {
+      log('Call cancelled');
+      document.getElementById('incomingModal').classList.remove('show');
+      incomingData = null;
+    });
+
+    socket.on('callError', (data) => {
+      log('Call error: ' + data.message, 'err');
+      alert(data.message);
+      cleanupCall();
+    });
+
+    // ===== JOIN HANDLERS =====
+    document.getElementById('joinBtn').addEventListener('click', joinRoom);
+    
+    document.getElementById('nameInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('roomInput').focus();
+    });
+    
+    document.getElementById('roomInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') joinRoom();
+    });
+
+    function joinRoom() {
+      const name = document.getElementById('nameInput').value.trim();
+      const room = document.getElementById('roomInput').value.trim();
+      
+      joinError.textContent = '';
+      
+      if (!name) {
+        joinError.textContent = 'Please enter your name';
+        document.getElementById('nameInput').focus();
+        return;
+      }
+      if (!room) {
+        joinError.textContent = 'Please enter a room code';
+        document.getElementById('roomInput').focus();
+        return;
+      }
+      
+      if (!isConnected) {
+        joinError.textContent = 'Not connected. Please wait...';
+        return;
+      }
+      
+      log('Joining room: ' + room);
+      socket.emit('join', { 
+        username: name, 
+        roomCode: room,
+        sessionId: mySessionId 
+      });
+    }
 
     // ===== KEYBOARD & VIEWPORT HANDLING =====
-    var msgInput = document.getElementById('msgInput');
-    var chatScreen = document.getElementById('chatScreen');
-    var messagesEl = document.getElementById('messages');
-    var chatInputArea = document.getElementById('chatInputArea');
-    var initialViewportHeight = window.innerHeight;
+    const initialViewportHeight = window.innerHeight;
 
-    // Handle visual viewport changes (keyboard)
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', handleViewportResize);
       window.visualViewport.addEventListener('scroll', handleViewportResize);
@@ -464,33 +1322,26 @@
     function handleViewportResize() {
       if (!chatScreen.classList.contains('active')) return;
       
-      var viewport = window.visualViewport;
-      var offsetTop = viewport.offsetTop;
-      var height = viewport.height;
+      const viewport = window.visualViewport;
+      const offsetTop = viewport.offsetTop;
+      const height = viewport.height;
       
-      // Adjust chat screen to visible viewport
       chatScreen.style.height = height + 'px';
       chatScreen.style.transform = 'translateY(' + offsetTop + 'px)';
       
-      // Scroll to bottom when keyboard opens
-      setTimeout(function() {
-        scrollToBottom(true);
-      }, 100);
+      setTimeout(() => scrollToBottom(true), 100);
     }
 
-    // Focus/blur handling for input
-    msgInput.addEventListener('focus', function() {
+    msgInput.addEventListener('focus', () => {
       log('Input focused');
-      setTimeout(function() {
+      setTimeout(() => {
         scrollToBottom(true);
-        // Ensure input is visible
         msgInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }, 300);
     });
 
-    msgInput.addEventListener('blur', function() {
-      // Reset viewport when keyboard closes
-      setTimeout(function() {
+    msgInput.addEventListener('blur', () => {
+      setTimeout(() => {
         if (window.visualViewport) {
           chatScreen.style.height = '100%';
           chatScreen.style.transform = 'none';
@@ -498,69 +1349,13 @@
       }, 100);
     });
 
-    // Fallback for browsers without visualViewport
-    window.addEventListener('resize', function() {
+    window.addEventListener('resize', () => {
       if (!window.visualViewport) {
-        var currentHeight = window.innerHeight;
+        const currentHeight = window.innerHeight;
         if (currentHeight < initialViewportHeight * 0.8) {
-          // Keyboard is likely open
-          setTimeout(function() {
-            scrollToBottom(true);
-          }, 100);
+          setTimeout(() => scrollToBottom(true), 100);
         }
       }
-    });
-
-    // ===== SOCKET =====
-    var socket = io();
-
-    socket.on('connect', function() {
-      myId = socket.id;
-      log('Connected: ' + myId);
-    });
-
-    socket.on('disconnect', function() {
-      log('Disconnected!', true);
-    });
-
-    socket.on('yourSocketId', function(id) {
-      myId = id;
-    });
-
-    socket.on('error', function(msg) {
-      alert(msg);
-      log('Error: ' + msg, true);
-    });
-
-    socket.on('joinSuccess', function(data) {
-      myRoom = data.room;
-      myName = data.username;
-      myId = data.socketId;
-      log('Joined room: ' + myRoom);
-      
-      document.getElementById('joinScreen').classList.remove('active');
-      chatScreen.classList.add('active');
-      document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
-      addSystemMessage('Welcome! Tap "online" to make audio calls.');
-      
-      // Initialize audio context on user interaction
-      initAudioContext();
-    });
-
-    socket.on('userList', function(list) {
-      users = list;
-      document.getElementById('userInfo').textContent = '👥 ' + list.length + ' online - tap to call';
-      log('Users: ' + list.map(function(u) { return u.username; }).join(', '));
-    });
-
-    socket.on('userJoined', function(data) {
-      addSystemMessage(data.username + ' joined');
-    });
-
-    socket.on('userLeft', function(data) {
-      addSystemMessage(data.username + ' left');
-      delete typingUsers[data.socketId];
-      updateTypingUI();
     });
 
     // ===== AUDIO CONTEXT INIT =====
@@ -568,222 +1363,89 @@
       if (!audioContext) {
         try {
           audioContext = new (window.AudioContext || window.webkitAudioContext)();
-          if (audioContext.state === 'suspended') {
-            audioContext.resume();
-          }
-          log('AudioContext initialized: ' + audioContext.state);
+          log('AudioContext created: ' + audioContext.state);
         } catch (e) {
-          log('AudioContext error: ' + e.message, true);
+          log('AudioContext error: ' + e.message, 'err');
         }
+      }
+      
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+          log('AudioContext resumed');
+        }).catch(e => {
+          log('AudioContext resume failed: ' + e.message, 'err');
+        });
       }
     }
 
     // ===== SCROLL HANDLING =====
-    messagesEl.addEventListener('scroll', function() {
-      var threshold = 100;
-      var distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    messagesEl.addEventListener('scroll', () => {
+      const threshold = 100;
+      const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
       shouldAutoScroll = distanceFromBottom < threshold;
     });
 
     function scrollToBottom(force) {
       if (force || shouldAutoScroll) {
-        requestAnimationFrame(function() {
+        requestAnimationFrame(() => {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         });
       }
     }
 
-    // ===== MESSAGES =====
-    socket.on('message', function(data) {
-      var isMine = data.senderId === myId;
-      addMessage(data, isMine ? 'mine' : 'other');
-      
-      if (!isMine) {
-        delete typingUsers[data.senderId];
-        updateTypingUI();
-        
-        if (document.hasFocus()) {
-          socket.emit('markSeen', [data.id]);
-        } else {
-          unseenMessages.push(data.id);
-        }
-      }
-    });
-
-    socket.on('messageSeen', function(data) {
-      var tickEl = document.getElementById('tick-' + data.messageId);
-      if (tickEl && !tickEl.classList.contains('seen')) {
-        tickEl.textContent = '✓✓';
-        tickEl.classList.add('seen');
-        log('Message seen by ' + data.seenBy);
-      }
-    });
-
-    // ===== TYPING INDICATORS =====
-    socket.on('typing', function(data) {
-      typingUsers[data.socketId] = data.username;
-      updateTypingUI();
-      
-      setTimeout(function() {
-        if (typingUsers[data.socketId]) {
-          delete typingUsers[data.socketId];
-          updateTypingUI();
-        }
-      }, 3000);
-    });
-
-    socket.on('stopTyping', function(data) {
-      delete typingUsers[data.socketId];
-      updateTypingUI();
-    });
-
-    function updateTypingUI() {
-      var names = Object.values(typingUsers);
-      var el = document.getElementById('typingIndicator');
-      
-      if (names.length === 0) {
-        el.textContent = '';
-      } else if (names.length === 1) {
-        el.innerHTML = names[0] + ' is typing<span class="dots"></span>';
-      } else if (names.length === 2) {
-        el.innerHTML = names[0] + ' and ' + names[1] + ' are typing<span class="dots"></span>';
-      } else {
-        el.innerHTML = names.length + ' people are typing<span class="dots"></span>';
-      }
-    }
-
-    window.addEventListener('focus', function() {
-      if (unseenMessages.length > 0) {
-        socket.emit('markSeen', unseenMessages);
-        unseenMessages = [];
-      }
-    });
-
-    // ===== WEBRTC SIGNALING =====
-    socket.on('incomingCall', function(data) {
-      log('📞 Incoming call from: ' + data.callerName);
-      if (document.getElementById('callScreen').classList.contains('active')) {
-        socket.emit('rejectCall', { targetId: data.callerId });
-        return;
-      }
-      incomingData = data;
-      document.getElementById('callerName').textContent = data.callerName + ' is calling...';
-      document.getElementById('incomingModal').classList.add('show');
-      
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-      
-      // Initialize audio context for incoming call
-      initAudioContext();
-    });
-
-    socket.on('callAnswered', function(data) {
-      log('Call answered!');
-      if (pc) {
-        pc.setRemoteDescription(new RTCSessionDescription(data.answer))
-          .then(function() {
-            log('Remote description set');
-            processIceQueue();
-          })
-          .catch(function(e) {
-            log('Error: ' + e.message, true);
-          });
-      }
-    });
-
-    socket.on('iceCandidate', function(data) {
-      log('Received ICE candidate');
-      if (!pc) {
-        iceQueue.push(data.candidate);
-        return;
-      }
-      if (!pc.remoteDescription || !pc.remoteDescription.type) {
-        iceQueue.push(data.candidate);
-        return;
-      }
-      pc.addIceCandidate(new RTCIceCandidate(data.candidate))
-        .then(function() {
-          log('ICE candidate added');
-        })
-        .catch(function(e) {
-          log('ICE error: ' + e.message, true);
-        });
-    });
-
-    socket.on('callEnded', function() {
-      log('Call ended by remote');
-      addSystemMessage('Call ended');
-      cleanupCall();
-    });
-
-    socket.on('callRejected', function() {
-      log('Call rejected');
-      addSystemMessage('Call declined');
-      cleanupCall();
-    });
-
-    // ===== JOIN =====
-    document.getElementById('joinBtn').addEventListener('click', function() {
-      var name = document.getElementById('nameInput').value.trim();
-      var room = document.getElementById('roomInput').value.trim();
-      if (!name || !room) {
-        alert('Please fill both fields');
-        return;
-      }
-      log('Joining...');
-      socket.emit('join', { username: name, roomCode: room });
-    });
-
-    document.getElementById('nameInput').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') document.getElementById('roomInput').focus();
-    });
-
-    document.getElementById('roomInput').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') document.getElementById('joinBtn').click();
-    });
-
     // ===== MESSAGE FUNCTIONS =====
     function addSystemMessage(text) {
-      var div = document.createElement('div');
+      const div = document.createElement('div');
       div.className = 'msg sys';
       div.textContent = text;
       messagesEl.appendChild(div);
       scrollToBottom(true);
     }
 
-    function addMessage(data, type) {
-      var div = document.createElement('div');
+    function formatTimestamp(timestamp) {
+      try {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return timestamp;
+      }
+    }
+
+    function addMessage(data, type, isHistory = false) {
+      const div = document.createElement('div');
       div.className = 'msg ' + type;
       div.id = 'msg-' + data.id;
       div.dataset.senderId = data.senderId;
       
-      var html = '';
+      let html = '';
       
       if (type === 'other') {
         html += '<div class="sender">' + escapeHtml(data.username) + '</div>';
       }
       
-      if (data.type === 'image') {
-        html += '<div class="text"><img src="' + data.imageData + '" onclick="showFullImage(this.src)"></div>';
-      } else {
+      if (data.type === 'image' && data.imageData && data.imageData !== '[IMAGE]') {
+        html += '<div class="text"><img src="' + data.imageData + '" onclick="showFullImage(this.src)" loading="lazy" alt="Image"></div>';
+      } else if (data.type === 'text') {
         html += '<div class="text">' + escapeHtml(data.text) + '</div>';
       }
       
       html += '<div class="meta">';
-      html += '<span class="time">' + data.timestamp + '</span>';
+      html += '<span class="time">' + formatTimestamp(data.timestamp) + '</span>';
       if (type === 'mine') {
-        html += '<span class="ticks" id="tick-' + data.id + '">✓</span>';
+        html += '<span class="ticks delivered" id="tick-' + data.id + '">✓</span>';
       }
       html += '</div>';
       
       div.innerHTML = html;
       messagesEl.appendChild(div);
       
-      // Always scroll for own messages, respect shouldAutoScroll for others
-      scrollToBottom(type === 'mine');
+      if (!isHistory) {
+        scrollToBottom(type === 'mine');
+      }
     }
 
     function escapeHtml(text) {
-      var div = document.createElement('div');
+      const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
@@ -793,136 +1455,174 @@
       document.getElementById('fullImgModal').classList.add('show');
     };
 
-    document.getElementById('closeFullImg').addEventListener('click', function() {
+    document.getElementById('closeFullImg').addEventListener('click', () => {
       document.getElementById('fullImgModal').classList.remove('show');
     });
 
     document.getElementById('fullImgModal').addEventListener('click', function(e) {
-      if (e.target === this) {
-        this.classList.remove('show');
-      }
+      if (e.target === this) this.classList.remove('show');
     });
 
     // ===== SEND MESSAGE =====
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
-    msgInput.addEventListener('keypress', function(e) {
+    
+    msgInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         sendMessage();
       }
     });
 
-    msgInput.addEventListener('input', function() {
+    msgInput.addEventListener('input', () => {
       if (!isTyping) {
         isTyping = true;
         socket.emit('typing');
       }
       
       clearTimeout(typingTimeout);
-      typingTimeout = setTimeout(function() {
+      typingTimeout = setTimeout(() => {
         isTyping = false;
         socket.emit('stopTyping');
       }, 2000);
     });
 
     function sendMessage() {
-      var text = msgInput.value.trim();
-      if (text) {
-        log('Sending: ' + text.slice(0, 30));
-        socket.emit('message', text);
+      const text = msgInput.value.trim();
+      if (!text) return;
+      
+      if (!isConnected) {
+        messageQueue.push({ type: 'message', data: text });
         msgInput.value = '';
-        isTyping = false;
-        socket.emit('stopTyping');
-        scrollToBottom(true);
+        addSystemMessage('Message queued (offline)');
+        return;
       }
+      
+      log('Sending: ' + text.slice(0, 30));
+      
+      socket.emit('message', text, (response) => {
+        if (response.status === 'ok') {
+          log('Message delivered: ' + response.messageId);
+        } else {
+          log('Message failed: ' + response.message, 'err');
+        }
+      });
+      
+      msgInput.value = '';
+      isTyping = false;
+      socket.emit('stopTyping');
+      scrollToBottom(true);
     }
 
-    // ===== IMAGE =====
-    document.getElementById('imgBtn').addEventListener('click', function() {
+    // ===== IMAGE HANDLING =====
+    document.getElementById('imgBtn').addEventListener('click', () => {
       document.getElementById('fileInput').click();
     });
 
-    document.getElementById('fileInput').addEventListener('change', function(e) {
-      var file = e.target.files[0];
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
       if (!file) return;
+      
       if (file.size > 3 * 1024 * 1024) {
-        alert('Max 3MB');
+        alert('Image too large. Max 3MB allowed.');
         return;
       }
-      var reader = new FileReader();
-      reader.onload = function(ev) {
+      
+      const reader = new FileReader();
+      reader.onload = (ev) => {
         pendingImage = ev.target.result;
         document.getElementById('previewImg').src = pendingImage;
         document.getElementById('previewModal').classList.add('show');
+      };
+      reader.onerror = () => {
+        alert('Failed to read image');
       };
       reader.readAsDataURL(file);
       e.target.value = '';
     });
 
-    document.getElementById('cancelImg').addEventListener('click', function() {
+    document.getElementById('cancelImg').addEventListener('click', () => {
       document.getElementById('previewModal').classList.remove('show');
       pendingImage = null;
     });
 
-    document.getElementById('confirmImg').addEventListener('click', function() {
-      if (pendingImage) {
-        log('Sending image');
-        socket.emit('imageMessage', pendingImage);
-        document.getElementById('previewModal').classList.remove('show');
-        pendingImage = null;
-      }
+    document.getElementById('confirmImg').addEventListener('click', () => {
+      if (!pendingImage) return;
+      
+      log('Sending image...');
+      socket.emit('imageMessage', pendingImage, (response) => {
+        if (response.status === 'ok') {
+          log('Image sent: ' + response.messageId);
+        } else {
+          log('Image failed: ' + response.message, 'err');
+          alert('Failed to send image: ' + response.message);
+        }
+      });
+      
+      document.getElementById('previewModal').classList.remove('show');
+      pendingImage = null;
     });
 
     // ===== USER LIST =====
-    document.getElementById('userInfo').addEventListener('click', function() {
+    document.getElementById('userInfo').addEventListener('click', () => {
       renderUserList();
       document.getElementById('userModal').classList.add('show');
     });
 
-    document.getElementById('closeUserModal').addEventListener('click', function() {
+    document.getElementById('closeUserModal').addEventListener('click', () => {
       document.getElementById('userModal').classList.remove('show');
     });
 
     function renderUserList() {
-      var list = document.getElementById('userList');
+      const list = document.getElementById('userList');
       list.innerHTML = '';
-      users.forEach(function(u) {
-        var isMe = u.socketId === myId;
-        var div = document.createElement('div');
+      
+      users.forEach(u => {
+        const isMe = u.socketId === myId;
+        const isOnline = u.online !== false;
+        
+        const div = document.createElement('div');
         div.className = 'user-item' + (isMe ? ' me' : '');
-        div.innerHTML = '<span class="name">' + (isMe ? '👤 ' : '🟢 ') + escapeHtml(u.username) + (isMe ? ' (you)' : '') + '</span>';
-        if (!isMe) {
-          var btn = document.createElement('button');
+        
+        const nameHtml = '<span class="name">' +
+          '<span class="' + (isOnline ? 'online-dot' : 'offline-dot') + '"></span>' +
+          escapeHtml(u.username) + (isMe ? ' (you)' : '') +
+          '</span>';
+        
+        div.innerHTML = nameHtml;
+        
+        if (!isMe && isOnline) {
+          const btn = document.createElement('button');
           btn.className = 'call-btn';
           btn.textContent = '📞 Call';
-          btn.onclick = function() {
+          btn.onclick = () => {
             document.getElementById('userModal').classList.remove('show');
             startCall(u.socketId, u.username);
           };
           div.appendChild(btn);
         }
+        
         list.appendChild(div);
       });
     }
 
-    document.getElementById('leaveBtn').addEventListener('click', function() {
+    document.getElementById('leaveBtn').addEventListener('click', () => {
       if (confirm('Leave room?')) {
+        localStorage.removeItem('chatSessionId');
+        localStorage.removeItem('chatRoom');
+        localStorage.removeItem('chatName');
         location.reload();
       }
     });
 
-    // ===== AUDIO CALL =====
-    function startCall(targetId, targetName) {
-      log('📞 Calling ' + targetName);
+    // ===== AUDIO CALL FUNCTIONS =====
+    async function startCall(targetId, targetName) {
+      log('📞 Starting call to ' + targetName);
+      
       callTarget = targetId;
       callTargetName = targetName;
       iceQueue = [];
 
-      // Initialize audio context
       initAudioContext();
-      if (audioContext && audioContext.state === 'suspended') {
-        audioContext.resume();
-      }
 
       document.getElementById('callScreen').classList.add('active');
       document.getElementById('callName').textContent = targetName;
@@ -930,90 +1630,89 @@
       document.getElementById('callTimer').textContent = '00:00';
       document.getElementById('callAvatar').className = 'call-avatar ringing';
 
-      getAudio()
-        .then(function() {
-          createPC();
-          localStream.getTracks().forEach(function(track) {
-            pc.addTrack(track, localStream);
-          });
-          return pc.createOffer();
-        })
-        .then(function(offer) {
-          return pc.setLocalDescription(offer);
-        })
-        .then(function() {
-          log('Sending offer');
-          socket.emit('callUser', {
-            targetId: targetId,
-            offer: pc.localDescription,
-            callerName: myName
-          });
-        })
-        .catch(function(e) {
-          log('Call error: ' + e.message, true);
-          alert('Error: ' + e.message);
-          cleanupCall();
+      try {
+        await getAudio();
+        createPC();
+        
+        localStream.getTracks().forEach(track => {
+          pc.addTrack(track, localStream);
+          log('Added track: ' + track.kind);
         });
+
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: false
+        });
+        
+        await pc.setLocalDescription(offer);
+        log('Local description set, sending offer...');
+
+        socket.emit('callUser', {
+          targetId: targetId,
+          offer: pc.localDescription,
+          callerName: myName
+        });
+        
+      } catch (e) {
+        log('Call error: ' + e.message, 'err');
+        alert('Failed to start call: ' + e.message);
+        cleanupCall();
+      }
     }
 
-    function getAudio() {
-      log('Getting audio...');
-      return navigator.mediaDevices.getUserMedia({
-        video: false,
-        audio: { 
-          echoCancellation: true, 
-          noiseSuppression: true, 
-          autoGainControl: true,
-          sampleRate: 48000
-        }
-      }).then(function(stream) {
-        localStream = stream;
-        log('Audio ready - tracks: ' + stream.getAudioTracks().length);
-        return stream;
-      });
+    async function getAudio() {
+      log('Requesting microphone access...');
+      
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000
+          }
+        });
+        
+        log('Microphone access granted. Tracks: ' + localStream.getAudioTracks().length);
+        return localStream;
+        
+      } catch (e) {
+        log('Microphone error: ' + e.message, 'err');
+        throw new Error('Microphone access denied. Please allow microphone access and try again.');
+      }
     }
 
     function createPC() {
-      log('Creating peer connection');
+      log('Creating peer connection...');
+      
+      if (!iceServers) {
+        log('Warning: ICE servers not loaded, using defaults', 'warn');
+        iceServers = {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        };
+      }
+      
       pc = new RTCPeerConnection(iceServers);
-
-      pc.ontrack = function(e) {
-        log('Got remote track: ' + e.track.kind);
+      
+      pc.ontrack = (e) => {
+        log('Received remote track: ' + e.track.kind);
         
-        if (e.track.kind === 'audio') {
-          // Set the stream to audio element
+        if (e.track.kind === 'audio' && e.streams[0]) {
           remoteAudioEl.srcObject = e.streams[0];
-          
-          // Ensure audio plays
           remoteAudioEl.volume = 1.0;
           remoteAudioEl.muted = false;
           
-          // Try to play
-          var playPromise = remoteAudioEl.play();
-          if (playPromise !== undefined) {
-            playPromise.then(function() {
-              log('Audio playing successfully');
-              setCallConnected();
-            }).catch(function(err) {
-              log('Audio play error: ' + err.message, true);
-              // Try again with user interaction
-              document.getElementById('callStatusText').textContent = 'Tap to enable audio';
-              document.getElementById('callAvatar').onclick = function() {
-                remoteAudioEl.play().then(function() {
-                  log('Audio playing after tap');
-                  setCallConnected();
-                  document.getElementById('callAvatar').onclick = null;
-                }).catch(function(e) {
-                  log('Still failed: ' + e.message, true);
-                });
-              };
-            });
-          }
+          playRemoteAudio();
         }
       };
 
-      pc.onicecandidate = function(e) {
+      pc.onicecandidate = (e) => {
         if (e.candidate && callTarget) {
+          log('Sending ICE candidate');
           socket.emit('iceCandidate', {
             targetId: callTarget,
             candidate: e.candidate
@@ -1021,57 +1720,150 @@
         }
       };
 
-      pc.oniceconnectionstatechange = function() {
-        log('ICE: ' + pc.iceConnectionState);
+      pc.oniceconnectionstatechange = () => {
+        log('ICE state: ' + pc.iceConnectionState);
         
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-          setCallConnected();
-        }
-        if (pc.iceConnectionState === 'failed') {
-          log('ICE failed, restarting...');
-          pc.restartIce();
-        }
-        if (pc.iceConnectionState === 'disconnected') {
-          document.getElementById('callStatusText').textContent = 'Reconnecting...';
+        switch (pc.iceConnectionState) {
+          case 'connected':
+          case 'completed':
+            setCallConnected();
+            break;
+          case 'failed':
+            log('ICE failed, attempting restart...', 'warn');
+            pc.restartIce();
+            document.getElementById('callStatusText').textContent = 'Reconnecting...';
+            break;
+          case 'disconnected':
+            document.getElementById('callStatusText').textContent = 'Connection unstable...';
+            break;
+          case 'closed':
+            log('ICE connection closed');
+            break;
         }
       };
 
-      pc.onconnectionstatechange = function() {
-        log('Connection: ' + pc.connectionState);
+      pc.onconnectionstatechange = () => {
+        log('Connection state: ' + pc.connectionState);
+        
         if (pc.connectionState === 'connected') {
           setCallConnected();
-        }
-        if (pc.connectionState === 'failed') {
-          addSystemMessage('Call failed');
+          startStatsMonitoring();
+        } else if (pc.connectionState === 'failed') {
+          addSystemMessage('Call connection failed');
           cleanupCall();
         }
       };
+
+      pc.onsignalingstatechange = () => {
+        log('Signaling state: ' + pc.signalingState);
+      };
     }
 
-    function setCallConnected() {
-      document.getElementById('callStatusText').textContent = 'Connected';
-      document.getElementById('callAvatar').className = 'call-avatar connected';
-      startCallTimer();
+    // ===== CALL QUALITY MONITORING (2025 Best Practice) =====
+    function startStatsMonitoring() {
+      if (statsInterval) clearInterval(statsInterval);
+      
+      statsInterval = setInterval(async () => {
+        if (!pc || pc.connectionState !== 'connected') return;
+        
+        try {
+          const stats = await pc.getStats();
+          let packetsLost = 0;
+          let packetsReceived = 0;
+          let jitter = 0;
+          
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              packetsLost = report.packetsLost || 0;
+              packetsReceived = report.packetsReceived || 0;
+              jitter = report.jitter || 0;
+            }
+          });
+          
+          // Calculate quality
+          const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0;
+          const qualityEl = document.getElementById('networkQuality');
+          
+          if (lossRate < 0.01 && jitter < 0.03) {
+            qualityEl.className = 'network-quality';
+          } else if (lossRate < 0.05 && jitter < 0.1) {
+            qualityEl.className = 'network-quality fair';
+          } else {
+            qualityEl.className = 'network-quality poor';
+          }
+        } catch (e) {
+          log('Stats error: ' + e.message, 'warn');
+        }
+      }, 2000);
+    }
+
+    function stopStatsMonitoring() {
+      if (statsInterval) {
+        clearInterval(statsInterval);
+        statsInterval = null;
+      }
+    }
+
+    async function playRemoteAudio() {
+      try {
+        await remoteAudioEl.play();
+        log('Remote audio playing');
+        setCallConnected();
+      } catch (err) {
+        log('Audio autoplay blocked: ' + err.message, 'warn');
+        document.getElementById('callStatusText').textContent = 'Tap screen to enable audio';
+        
+        const enableAudio = async () => {
+          try {
+            await remoteAudioEl.play();
+            log('Audio enabled after tap');
+            setCallConnected();
+            document.getElementById('callAvatar').removeEventListener('click', enableAudio);
+            document.getElementById('callScreen').removeEventListener('click', enableAudio);
+          } catch (e) {
+            log('Still cannot play audio: ' + e.message, 'err');
+          }
+        };
+        
+        document.getElementById('callAvatar').addEventListener('click', enableAudio);
+        document.getElementById('callScreen').addEventListener('click', enableAudio);
+      }
+    }
+
+    function addIceCandidate(candidate) {
+      if (!pc || pc.signalingState === 'closed') return;
+      
+      pc.addIceCandidate(new RTCIceCandidate(candidate))
+        .then(() => log('ICE candidate added'))
+        .catch(e => log('ICE candidate error: ' + e.message, 'err'));
     }
 
     function processIceQueue() {
-      log('Processing ' + iceQueue.length + ' queued candidates');
+      log('Processing ' + iceQueue.length + ' queued ICE candidates');
       while (iceQueue.length > 0) {
-        var candidate = iceQueue.shift();
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(function(e) {
-          log('ICE add error: ' + e.message, true);
-        });
+        const candidate = iceQueue.shift();
+        addIceCandidate(candidate);
       }
+    }
+
+    function setCallConnected() {
+      if (document.getElementById('callStatusText').textContent === 'Connected') return;
+      
+      document.getElementById('callStatusText').textContent = 'Connected';
+      document.getElementById('callAvatar').className = 'call-avatar connected';
+      startCallTimer();
+      log('Call connected!');
     }
 
     function startCallTimer() {
       if (callTimer) return;
+      
       callSeconds = 0;
-      callTimer = setInterval(function() {
+      callTimer = setInterval(() => {
         callSeconds++;
-        var mins = Math.floor(callSeconds / 60);
-        var secs = callSeconds % 60;
-        document.getElementById('callTimer').textContent = 
+        const mins = Math.floor(callSeconds / 60);
+        const secs = callSeconds % 60;
+        document.getElementById('callTimer').textContent =
           (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
       }, 1000);
     }
@@ -1084,19 +1876,16 @@
       callSeconds = 0;
     }
 
-    // Accept call
-    document.getElementById('acceptBtn').addEventListener('click', function() {
-      log('Accepting call');
+    // ===== ACCEPT CALL =====
+    document.getElementById('acceptBtn').addEventListener('click', async () => {
+      log('Accepting call...');
       document.getElementById('incomingModal').classList.remove('show');
+      
       callTarget = incomingData.callerId;
       callTargetName = incomingData.callerName;
       iceQueue = [];
 
-      // Initialize/resume audio context
       initAudioContext();
-      if (audioContext && audioContext.state === 'suspended') {
-        audioContext.resume();
-      }
 
       document.getElementById('callScreen').classList.add('active');
       document.getElementById('callName').textContent = callTargetName;
@@ -1104,70 +1893,80 @@
       document.getElementById('callTimer').textContent = '00:00';
       document.getElementById('callAvatar').className = 'call-avatar ringing';
 
-      getAudio()
-        .then(function() {
-          createPC();
-          localStream.getTracks().forEach(function(track) {
-            pc.addTrack(track, localStream);
-          });
-          return pc.setRemoteDescription(new RTCSessionDescription(incomingData.offer));
-        })
-        .then(function() {
-          log('Remote description set');
-          processIceQueue();
-          return pc.createAnswer();
-        })
-        .then(function(answer) {
-          return pc.setLocalDescription(answer);
-        })
-        .then(function() {
-          log('Sending answer');
-          socket.emit('answerCall', {
-            targetId: incomingData.callerId,
-            answer: pc.localDescription
-          });
-          incomingData = null;
-        })
-        .catch(function(e) {
-          log('Accept error: ' + e.message, true);
-          alert('Error: ' + e.message);
-          cleanupCall();
+      try {
+        await getAudio();
+        createPC();
+        
+        localStream.getTracks().forEach(track => {
+          pc.addTrack(track, localStream);
+          log('Added track: ' + track.kind);
         });
+
+        await pc.setRemoteDescription(new RTCSessionDescription(incomingData.offer));
+        log('Remote description set');
+        processIceQueue();
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        log('Local description set, sending answer...');
+
+        socket.emit('answerCall', {
+          targetId: incomingData.callerId,
+          answer: pc.localDescription
+        });
+
+        incomingData = null;
+        
+      } catch (e) {
+        log('Accept error: ' + e.message, 'err');
+        alert('Failed to accept call: ' + e.message);
+        cleanupCall();
+      }
     });
 
-    // Reject call
-    document.getElementById('rejectBtn').addEventListener('click', function() {
+    // ===== REJECT CALL =====
+    document.getElementById('rejectBtn').addEventListener('click', () => {
       log('Rejecting call');
       socket.emit('rejectCall', { targetId: incomingData.callerId });
       document.getElementById('incomingModal').classList.remove('show');
       incomingData = null;
     });
 
-    // End call
-    document.getElementById('endBtn').addEventListener('click', function() {
+    // ===== END CALL =====
+    document.getElementById('endBtn').addEventListener('click', () => {
       log('Ending call');
+      
       if (callTarget) {
         socket.emit('endCall', { targetId: callTarget });
       }
-      var duration = document.getElementById('callTimer').textContent;
+      
+      const duration = document.getElementById('callTimer').textContent;
       if (duration !== '00:00') {
         addSystemMessage('Call ended (' + duration + ')');
       }
+      
       cleanupCall();
     });
 
     function cleanupCall() {
-      log('Cleaning up');
+      log('Cleaning up call...');
       stopCallTimer();
+      stopStatsMonitoring();
       
       if (localStream) {
-        localStream.getTracks().forEach(function(t) { 
-          t.stop(); 
-          log('Stopped track: ' + t.kind);
+        localStream.getTracks().forEach(track => {
+          track.stop();
+          log('Stopped local track: ' + track.kind);
         });
         localStream = null;
       }
+      
       if (pc) {
+        pc.ontrack = null;
+        pc.onicecandidate = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onconnectionstatechange = null;
+        pc.onsignalingstatechange = null;
         pc.close();
         pc = null;
       }
@@ -1177,7 +1976,7 @@
       
       document.getElementById('callScreen').classList.remove('active');
       document.getElementById('incomingModal').classList.remove('show');
-      document.getElementById('callAvatar').onclick = null;
+      document.getElementById('networkQuality').className = 'network-quality';
       
       callTarget = null;
       callTargetName = '';
@@ -1185,36 +1984,285 @@
       iceQueue = [];
       micOff = false;
       speakerOff = false;
+      
       document.getElementById('micBtn').classList.remove('off');
       document.getElementById('micBtn').textContent = '🎤';
       document.getElementById('speakerBtn').classList.remove('off');
       document.getElementById('speakerBtn').textContent = '🔊';
     }
 
-    // Toggle mic
+    // ===== MIC TOGGLE =====
     document.getElementById('micBtn').addEventListener('click', function() {
       if (!localStream) return;
+      
       micOff = !micOff;
-      localStream.getAudioTracks().forEach(function(t) { t.enabled = !micOff; });
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !micOff;
+      });
+      
       this.classList.toggle('off', micOff);
       this.textContent = micOff ? '🔇' : '🎤';
-      log('Mic ' + (micOff ? 'muted' : 'unmuted'));
+      log('Microphone ' + (micOff ? 'muted' : 'unmuted'));
     });
 
-    // Toggle speaker
+    // ===== SPEAKER TOGGLE =====
     document.getElementById('speakerBtn').addEventListener('click', function() {
       speakerOff = !speakerOff;
       remoteAudioEl.muted = speakerOff;
+      
       this.classList.toggle('off', speakerOff);
       this.textContent = speakerOff ? '🔈' : '🔊';
       log('Speaker ' + (speakerOff ? 'muted' : 'unmuted'));
     });
 
-    // Handle page visibility for audio
-    document.addEventListener('visibilitychange', function() {
+    // ===== VISIBILITY CHANGE =====
+    document.addEventListener('visibilitychange', () => {
       if (!document.hidden && remoteAudioEl.srcObject) {
-        remoteAudioEl.play().catch(function() {});
+        remoteAudioEl.play().catch(() => {});
       }
+    });
+
+    // ===== NOTIFICATIONS =====
+    async function requestNotificationPermission() {
+      if (!('Notification' in window)) return;
+      if (Notification.permission === 'granted') return;
+      
+      try {
+        const permission = await Notification.requestPermission();
+        log('Notification permission: ' + permission);
+      } catch (e) {
+        log('Notification permission error: ' + e.message, 'warn');
+      }
+    }
+
+    function showLocalNotification(title, body, data = {}) {
+      if (!('Notification' in window)) return;
+      if (Notification.permission !== 'granted') return;
+      if (document.hasFocus()) return;
+      
+      try {
+        const notification = new Notification(title, {
+          body: body,
+          icon: '/icon-192.png',
+          badge: '/icon-72.png',
+          tag: 'chat-notification',
+          renotify: true,
+          data: data
+        });
+        
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+          
+          if (data.messageId) {
+            const msgEl = document.getElementById('msg-' + data.messageId);
+            if (msgEl) {
+              msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              msgEl.style.animation = 'highlight 2s ease';
+            }
+          }
+        };
+        
+        // Auto-close after 5 seconds
+        setTimeout(() => notification.close(), 5000);
+      } catch (e) {
+        log('Notification error: ' + e.message, 'warn');
+      }
+    }
+
+    // ===== SERVICE WORKER REGISTRATION =====
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const registration = await navigator.serviceWorker.register('/sw.js', {
+            scope: '/'
+          });
+          
+          log('SW registered: ' + registration.scope);
+          
+          // Check for updates
+          registration.addEventListener('updatefound', () => {
+            const newWorker = registration.installing;
+            log('SW update found');
+            
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                showUpdateNotification();
+              }
+            });
+          });
+          
+          // Handle messages from service worker
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            log('Message from SW: ' + JSON.stringify(event.data));
+            
+            if (event.data.type === 'NOTIFICATION_CLICK') {
+              const data = event.data.data;
+              if (data.messageId) {
+                const msgEl = document.getElementById('msg-' + data.messageId);
+                if (msgEl) {
+                  msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  msgEl.style.animation = 'highlight 2s ease';
+                }
+              }
+            }
+          });
+          
+        } catch (err) {
+          log('SW registration failed: ' + err.message, 'err');
+        }
+      });
+    }
+
+    function showUpdateNotification() {
+      const update = document.createElement('div');
+      update.id = 'updateNotification';
+      update.innerHTML = `
+        <div style="
+          position: fixed;
+          bottom: 80px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: var(--info);
+          color: white;
+          padding: 12px 20px;
+          border-radius: 25px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+          z-index: 1000;
+          font-size: 14px;
+        ">
+          <span>New version available</span>
+          <button onclick="updateApp()" style="
+            background: white;
+            color: var(--info);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+            cursor: pointer;
+          ">Update</button>
+          <button onclick="this.parentElement.parentElement.remove()" style="
+            background: transparent;
+            color: white;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 5px;
+          ">×</button>
+        </div>
+      `;
+      document.body.appendChild(update);
+    }
+
+    window.updateApp = function() {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
+      }
+      window.location.reload();
+    };
+
+    // ===== AUTO-REJOIN ON PAGE LOAD =====
+    window.addEventListener('load', () => {
+      const savedRoom = localStorage.getItem('chatRoom');
+      const savedName = localStorage.getItem('chatName');
+      
+      if (savedRoom && savedName) {
+        document.getElementById('nameInput').value = savedName;
+        document.getElementById('roomInput').value = savedRoom;
+        myRoom = savedRoom;
+        myName = savedName;
+      }
+    });
+
+    // ===== BEFORE UNLOAD =====
+    window.addEventListener('beforeunload', () => {
+      if (pc) {
+        cleanupCall();
+      }
+    });
+
+    // ===== INSTALL PROMPT (PWA) =====
+    let deferredPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      
+      // Show install button after user joins a room
+      setTimeout(() => {
+        if (deferredPrompt && myRoom) {
+          showInstallPrompt();
+        }
+      }, 30000);
+    });
+
+    function showInstallPrompt() {
+      if (!deferredPrompt) return;
+      
+      const install = document.createElement('div');
+      install.id = 'installPrompt';
+      install.innerHTML = `
+        <div style="
+          position: fixed;
+          bottom: 80px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: linear-gradient(135deg, var(--primary), var(--primary-light));
+          color: white;
+          padding: 12px 20px;
+          border-radius: 25px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+          z-index: 1000;
+          font-size: 14px;
+        ">
+          <span>📱 Install app for better experience</span>
+          <button onclick="installApp()" style="
+            background: white;
+            color: var(--primary);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+            cursor: pointer;
+          ">Install</button>
+          <button onclick="dismissInstall()" style="
+            background: transparent;
+            color: white;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 5px;
+          ">×</button>
+        </div>
+      `;
+      document.body.appendChild(install);
+    }
+
+    window.installApp = async function() {
+      if (!deferredPrompt) return;
+      
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      log('Install prompt outcome: ' + outcome);
+      
+      deferredPrompt = null;
+      dismissInstall();
+    };
+
+    window.dismissInstall = function() {
+      const el = document.getElementById('installPrompt');
+      if (el) el.remove();
+    };
+
+    window.addEventListener('appinstalled', () => {
+      log('App installed');
+      deferredPrompt = null;
     });
   </script>
 </body>
