@@ -12,9 +12,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Private Chat">
   
-  <!-- Security Headers (should also be set server-side) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' wss: https:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
-  
   <!-- Manifest -->
   <link rel="manifest" href="/manifest.json">
   
@@ -262,7 +259,7 @@
       padding: 6px 12px;
     }
 
-    /* Message highlight animation (for notification clicks) */
+    /* Message highlight animation */
     @keyframes highlight {
       0%, 100% { background: inherit; }
       50% { background: rgba(233, 69, 96, 0.3); }
@@ -643,6 +640,20 @@
     .network-quality.poor .bar:nth-child(3),
     .network-quality.poor .bar:nth-child(4) { background: var(--text-muted); }
 
+    /* Audio Debug Info */
+    .audio-debug {
+      position: absolute;
+      top: 120px;
+      left: 20px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(0,0,0,0.5);
+      padding: 8px;
+      border-radius: 8px;
+      display: none;
+    }
+    .audio-debug.show { display: block; }
+
     /* Debug */
     #debug {
       position: fixed; 
@@ -792,13 +803,16 @@
         <div class="bar"></div>
         <div class="bar"></div>
       </div>
+      <div class="audio-debug" id="audioDebug"></div>
     </div>
     <div class="call-controls">
       <button class="ctrl-btn speaker" id="speakerBtn" aria-label="Toggle speaker">🔊</button>
       <button class="ctrl-btn mic" id="micBtn" aria-label="Toggle microphone">🎤</button>
       <button class="ctrl-btn end" id="endBtn" aria-label="End call">✕</button>
     </div>
+    <!-- Multiple audio elements for better compatibility -->
     <audio id="remoteAudio" autoplay playsinline></audio>
+    <audio id="localAudioMonitor" muted></audio>
   </div>
 
   <button id="debugBtn">DEBUG</button>
@@ -811,8 +825,12 @@
     // ===== DEBUG LOGGER =====
     const debugEl = document.getElementById('debug');
     const debugBtn = document.getElementById('debugBtn');
+    const audioDebugEl = document.getElementById('audioDebug');
     
-    debugBtn.addEventListener('click', () => debugEl.classList.toggle('show'));
+    debugBtn.addEventListener('click', () => {
+      debugEl.classList.toggle('show');
+      audioDebugEl.classList.toggle('show');
+    });
 
     function log(msg, level = 'log') {
       console.log(msg);
@@ -843,6 +861,7 @@
     // WebRTC State
     let pc = null;
     let localStream = null;
+    let remoteStream = null;
     let callTarget = null;
     let callTargetName = '';
     let incomingData = null;
@@ -854,9 +873,13 @@
     let audioContext = null;
     let iceServers = null;
     let statsInterval = null;
+    let keepAliveInterval = null;
+    let isCallConnected = false;
+    let remoteDescriptionSet = false;
 
     // DOM Elements
     const remoteAudioEl = document.getElementById('remoteAudio');
+    const localAudioMonitor = document.getElementById('localAudioMonitor');
     const msgInput = document.getElementById('msgInput');
     const chatScreen = document.getElementById('chatScreen');
     const messagesEl = document.getElementById('messages');
@@ -869,11 +892,7 @@
       log('App is online');
       isOnline = true;
       offlineBanner.classList.remove('show');
-      
-      // Reconnect socket if needed
-      if (!socket.connected) {
-        socket.connect();
-      }
+      if (!socket.connected) socket.connect();
     });
 
     window.addEventListener('offline', () => {
@@ -891,40 +910,41 @@
         log('ICE servers loaded: ' + data.iceServers.length + ' servers');
       } catch (err) {
         log('Failed to fetch ICE servers, using defaults', 'warn');
-        // Updated TURN servers with better reliability
-        iceServers = {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' },
-            // Public TURN servers (for testing - use your own in production)
-            { 
-              urls: 'turn:openrelay.metered.ca:80', 
-              username: 'openrelayproject', 
-              credential: 'openrelayproject' 
-            },
-            { 
-              urls: 'turn:openrelay.metered.ca:443', 
-              username: 'openrelayproject', 
-              credential: 'openrelayproject' 
-            },
-            { 
-              urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
-              username: 'openrelayproject', 
-              credential: 'openrelayproject' 
-            }
-          ],
-          iceCandidatePoolSize: 10
-        };
+        iceServers = getDefaultIceServers();
       }
     }
 
-    // Load ICE servers on page load
+    function getDefaultIceServers() {
+      return {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          { 
+            urls: 'turn:openrelay.metered.ca:80', 
+            username: 'openrelayproject', 
+            credential: 'openrelayproject' 
+          },
+          { 
+            urls: 'turn:openrelay.metered.ca:443', 
+            username: 'openrelayproject', 
+            credential: 'openrelayproject' 
+          },
+          { 
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp', 
+            username: 'openrelayproject', 
+            credential: 'openrelayproject' 
+          }
+        ],
+        iceCandidatePoolSize: 10
+      };
+    }
+
     fetchIceServers();
 
-    // ===== SOCKET.IO CONNECTION (v4.8+ compatible) =====
+    // ===== SOCKET.IO CONNECTION =====
     const socket = io({
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -932,8 +952,6 @@
       reconnectionDelayMax: 5000,
       timeout: 20000,
       transports: ['websocket', 'polling'],
-      // Socket.IO 4.8+ feature: try all transports if first fails
-      // tryAllTransports: true, // Uncomment if using Socket.IO 4.8+
       upgrade: true,
       rememberUpgrade: true
     });
@@ -942,11 +960,8 @@
     function showConnectionStatus(status, message) {
       connectionStatus.textContent = message;
       connectionStatus.className = 'connection-status show ' + status;
-      
       if (status === 'connected') {
-        setTimeout(() => {
-          connectionStatus.classList.remove('show');
-        }, 2000);
+        setTimeout(() => connectionStatus.classList.remove('show'), 2000);
       }
     }
 
@@ -957,17 +972,11 @@
       log('Connected: ' + myId);
       showConnectionStatus('connected', 'Connected');
       
-      // Try to rejoin if we have session data
       if (mySessionId && myRoom && myName) {
         log('Attempting to rejoin...');
-        socket.emit('rejoin', {
-          sessionId: mySessionId,
-          roomCode: myRoom,
-          username: myName
-        });
+        socket.emit('rejoin', { sessionId: mySessionId, roomCode: myRoom, username: myName });
       }
       
-      // Send queued messages
       while (messageQueue.length > 0 && isConnected) {
         const msg = messageQueue.shift();
         socket.emit(msg.type, msg.data);
@@ -995,11 +1004,6 @@
       showConnectionStatus('connected', 'Reconnected');
     });
 
-    socket.io.on('reconnect_failed', () => {
-      log('Reconnection failed', 'err');
-      showConnectionStatus('disconnected', 'Connection lost. Please refresh.');
-    });
-
     socket.on('yourSocketId', (id) => {
       myId = id;
       log('Socket ID: ' + id);
@@ -1008,7 +1012,6 @@
     socket.on('error', (err) => {
       const message = typeof err === 'string' ? err : err.message;
       log('Error: ' + message, 'err');
-      
       if (err.type === 'duplicate' || err.type === 'validation') {
         joinError.textContent = message;
       } else {
@@ -1022,7 +1025,6 @@
       myId = data.socketId;
       mySessionId = data.sessionId;
       
-      // Store session for reconnection
       localStorage.setItem('chatSessionId', mySessionId);
       localStorage.setItem('chatRoom', myRoom);
       localStorage.setItem('chatName', myName);
@@ -1034,7 +1036,6 @@
       document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
       addSystemMessage('Welcome! Tap user count to make audio calls.');
       
-      initAudioContext();
       requestNotificationPermission();
     });
 
@@ -1056,7 +1057,6 @@
 
     socket.on('rejoinFailed', (data) => {
       log('Rejoin failed: ' + data.message, 'warn');
-      // Clear stored session
       localStorage.removeItem('chatSessionId');
       localStorage.removeItem('chatRoom');
       localStorage.removeItem('chatName');
@@ -1077,19 +1077,15 @@
       users = list;
       const onlineCount = list.filter(u => u.online !== false).length;
       document.getElementById('userCount').textContent = onlineCount + ' online';
-      log('Users updated: ' + list.map(u => u.username + (u.online === false ? '(offline)' : '')).join(', '));
+      log('Users: ' + list.map(u => u.username + (u.online === false ? '(offline)' : '')).join(', '));
     });
 
-    socket.on('userJoined', (data) => {
-      addSystemMessage(data.username + ' joined');
-    });
-
+    socket.on('userJoined', (data) => addSystemMessage(data.username + ' joined'));
     socket.on('userLeft', (data) => {
       addSystemMessage(data.username + ' left');
       typingUsers.delete(data.socketId);
       updateTypingUI();
     });
-
     socket.on('userOffline', (data) => {
       typingUsers.delete(data.socketId);
       updateTypingUI();
@@ -1108,8 +1104,6 @@
           socket.emit('markSeen', [data.id]);
         } else {
           unseenMessages.push(data.id);
-          
-          // Show notification when app is not focused
           if (!document.hasFocus()) {
             showLocalNotification(
               data.username,
@@ -1127,7 +1121,6 @@
         tickEl.textContent = '✓✓';
         tickEl.classList.remove('delivered');
         tickEl.classList.add('seen');
-        log('Message seen by ' + data.seenBy);
       }
     });
 
@@ -1135,8 +1128,6 @@
     socket.on('typing', (data) => {
       typingUsers.set(data.socketId, { username: data.username, timestamp: Date.now() });
       updateTypingUI();
-      
-      // Auto-remove after 3 seconds
       setTimeout(() => {
         const user = typingUsers.get(data.socketId);
         if (user && Date.now() - user.timestamp > 2500) {
@@ -1154,7 +1145,6 @@
     function updateTypingUI() {
       const names = Array.from(typingUsers.values()).map(u => u.username);
       const el = document.getElementById('typingIndicator');
-      
       if (names.length === 0) {
         el.innerHTML = '';
       } else {
@@ -1167,7 +1157,6 @@
       }
     }
 
-    // ===== FOCUS HANDLER =====
     window.addEventListener('focus', () => {
       if (unseenMessages.length > 0) {
         socket.emit('markSeen', unseenMessages);
@@ -1175,16 +1164,9 @@
       }
     });
 
-    // ===== HEARTBEAT =====
     setInterval(() => {
-      if (isConnected && myRoom) {
-        socket.emit('heartbeat');
-      }
+      if (isConnected && myRoom) socket.emit('heartbeat');
     }, 30000);
-
-    socket.on('heartbeat_ack', () => {
-      // Heartbeat acknowledged
-    });
 
     // ===== WEBRTC SIGNALING =====
     socket.on('incomingCall', (data) => {
@@ -1199,24 +1181,23 @@
       document.getElementById('callerName').textContent = data.callerName + ' is calling...';
       document.getElementById('incomingModal').classList.add('show');
       
-      // Show notification if not focused
       if (!document.hasFocus()) {
         showLocalNotification('📞 Incoming Call', data.callerName + ' is calling...', { type: 'call' });
       }
       
-      if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200, 100, 200]);
-      }
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
       
+      // Pre-initialize audio context on incoming call
       initAudioContext();
     });
 
     socket.on('callAnswered', async (data) => {
-      log('Call answered!');
+      log('Call answered, setting remote description...');
       if (pc && pc.signalingState !== 'closed') {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-          log('Remote description set');
+          remoteDescriptionSet = true;
+          log('Remote description set successfully');
           processIceQueue();
         } catch (e) {
           log('Error setting remote description: ' + e.message, 'err');
@@ -1228,11 +1209,13 @@
       log('Received ICE candidate from ' + data.from);
       
       if (!pc || pc.signalingState === 'closed') {
+        log('PC not ready, queueing ICE candidate');
         iceQueue.push(data.candidate);
         return;
       }
       
-      if (!pc.remoteDescription || !pc.remoteDescription.type) {
+      if (!remoteDescriptionSet) {
+        log('Remote description not set, queueing ICE candidate');
         iceQueue.push(data.candidate);
         return;
       }
@@ -1247,18 +1230,18 @@
     });
 
     socket.on('callRejected', (data) => {
-      log('Call rejected by ' + (data.username || 'remote'));
+      log('Call rejected');
       addSystemMessage('Call declined');
       cleanupCall();
     });
 
-    socket.on('callTimeout', (data) => {
+    socket.on('callTimeout', () => {
       log('Call timeout');
       addSystemMessage('No answer');
       cleanupCall();
     });
 
-    socket.on('callCancelled', (data) => {
+    socket.on('callCancelled', () => {
       log('Call cancelled');
       document.getElementById('incomingModal').classList.remove('show');
       incomingData = null;
@@ -1272,11 +1255,9 @@
 
     // ===== JOIN HANDLERS =====
     document.getElementById('joinBtn').addEventListener('click', joinRoom);
-    
     document.getElementById('nameInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') document.getElementById('roomInput').focus();
     });
-    
     document.getElementById('roomInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') joinRoom();
     });
@@ -1297,21 +1278,16 @@
         document.getElementById('roomInput').focus();
         return;
       }
-      
       if (!isConnected) {
         joinError.textContent = 'Not connected. Please wait...';
         return;
       }
       
       log('Joining room: ' + room);
-      socket.emit('join', { 
-        username: name, 
-        roomCode: room,
-        sessionId: mySessionId 
-      });
+      socket.emit('join', { username: name, roomCode: room, sessionId: mySessionId });
     }
 
-    // ===== KEYBOARD & VIEWPORT HANDLING =====
+    // ===== KEYBOARD & VIEWPORT =====
     const initialViewportHeight = window.innerHeight;
 
     if (window.visualViewport) {
@@ -1321,19 +1297,13 @@
 
     function handleViewportResize() {
       if (!chatScreen.classList.contains('active')) return;
-      
       const viewport = window.visualViewport;
-      const offsetTop = viewport.offsetTop;
-      const height = viewport.height;
-      
-      chatScreen.style.height = height + 'px';
-      chatScreen.style.transform = 'translateY(' + offsetTop + 'px)';
-      
+      chatScreen.style.height = viewport.height + 'px';
+      chatScreen.style.transform = 'translateY(' + viewport.offsetTop + 'px)';
       setTimeout(() => scrollToBottom(true), 100);
     }
 
     msgInput.addEventListener('focus', () => {
-      log('Input focused');
       setTimeout(() => {
         scrollToBottom(true);
         msgInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1349,20 +1319,14 @@
       }, 100);
     });
 
-    window.addEventListener('resize', () => {
-      if (!window.visualViewport) {
-        const currentHeight = window.innerHeight;
-        if (currentHeight < initialViewportHeight * 0.8) {
-          setTimeout(() => scrollToBottom(true), 100);
-        }
-      }
-    });
-
-    // ===== AUDIO CONTEXT INIT =====
+    // ===== AUDIO CONTEXT INIT (CRITICAL FOR MOBILE) =====
     function initAudioContext() {
       if (!audioContext) {
         try {
-          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: 'interactive',
+            sampleRate: 48000
+          });
           log('AudioContext created: ' + audioContext.state);
         } catch (e) {
           log('AudioContext error: ' + e.message, 'err');
@@ -1377,6 +1341,11 @@
         });
       }
     }
+
+    // Initialize audio context on any user interaction
+    ['click', 'touchstart', 'touchend'].forEach(event => {
+      document.addEventListener(event, () => initAudioContext(), { once: false, passive: true });
+    });
 
     // ===== SCROLL HANDLING =====
     messagesEl.addEventListener('scroll', () => {
@@ -1404,8 +1373,7 @@
 
     function formatTimestamp(timestamp) {
       try {
-        const date = new Date(timestamp);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       } catch {
         return timestamp;
       }
@@ -1418,7 +1386,6 @@
       div.dataset.senderId = data.senderId;
       
       let html = '';
-      
       if (type === 'other') {
         html += '<div class="sender">' + escapeHtml(data.username) + '</div>';
       }
@@ -1438,10 +1405,7 @@
       
       div.innerHTML = html;
       messagesEl.appendChild(div);
-      
-      if (!isHistory) {
-        scrollToBottom(type === 'mine');
-      }
+      if (!isHistory) scrollToBottom(type === 'mine');
     }
 
     function escapeHtml(text) {
@@ -1465,7 +1429,6 @@
 
     // ===== SEND MESSAGE =====
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
-    
     msgInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -1478,7 +1441,6 @@
         isTyping = true;
         socket.emit('typing');
       }
-      
       clearTimeout(typingTimeout);
       typingTimeout = setTimeout(() => {
         isTyping = false;
@@ -1497,14 +1459,9 @@
         return;
       }
       
-      log('Sending: ' + text.slice(0, 30));
-      
       socket.emit('message', text, (response) => {
-        if (response.status === 'ok') {
-          log('Message delivered: ' + response.messageId);
-        } else {
-          log('Message failed: ' + response.message, 'err');
-        }
+        if (response.status === 'ok') log('Message delivered');
+        else log('Message failed: ' + response.message, 'err');
       });
       
       msgInput.value = '';
@@ -1521,20 +1478,15 @@
     document.getElementById('fileInput').addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      
       if (file.size > 3 * 1024 * 1024) {
-        alert('Image too large. Max 3MB allowed.');
+        alert('Image too large. Max 3MB.');
         return;
       }
-      
       const reader = new FileReader();
       reader.onload = (ev) => {
         pendingImage = ev.target.result;
         document.getElementById('previewImg').src = pendingImage;
         document.getElementById('previewModal').classList.add('show');
-      };
-      reader.onerror = () => {
-        alert('Failed to read image');
       };
       reader.readAsDataURL(file);
       e.target.value = '';
@@ -1547,17 +1499,9 @@
 
     document.getElementById('confirmImg').addEventListener('click', () => {
       if (!pendingImage) return;
-      
-      log('Sending image...');
       socket.emit('imageMessage', pendingImage, (response) => {
-        if (response.status === 'ok') {
-          log('Image sent: ' + response.messageId);
-        } else {
-          log('Image failed: ' + response.message, 'err');
-          alert('Failed to send image: ' + response.message);
-        }
+        if (response.status !== 'ok') alert('Failed: ' + response.message);
       });
-      
       document.getElementById('previewModal').classList.remove('show');
       pendingImage = null;
     });
@@ -1583,12 +1527,8 @@
         const div = document.createElement('div');
         div.className = 'user-item' + (isMe ? ' me' : '');
         
-        const nameHtml = '<span class="name">' +
-          '<span class="' + (isOnline ? 'online-dot' : 'offline-dot') + '"></span>' +
-          escapeHtml(u.username) + (isMe ? ' (you)' : '') +
-          '</span>';
-        
-        div.innerHTML = nameHtml;
+        div.innerHTML = '<span class="name"><span class="' + (isOnline ? 'online-dot' : 'offline-dot') + '"></span>' + 
+          escapeHtml(u.username) + (isMe ? ' (you)' : '') + '</span>';
         
         if (!isMe && isOnline) {
           const btn = document.createElement('button');
@@ -1600,7 +1540,6 @@
           };
           div.appendChild(btn);
         }
-        
         list.appendChild(div);
       });
     }
@@ -1621,7 +1560,10 @@
       callTarget = targetId;
       callTargetName = targetName;
       iceQueue = [];
+      remoteDescriptionSet = false;
+      isCallConnected = false;
 
+      // CRITICAL: Initialize audio context before getting media
       initAudioContext();
 
       document.getElementById('callScreen').classList.add('active');
@@ -1632,26 +1574,32 @@
 
       try {
         await getAudio();
-        createPC();
+        await createPC();
         
+        // Add tracks to peer connection
         localStream.getTracks().forEach(track => {
+          log('Adding local track: ' + track.kind + ' enabled=' + track.enabled);
           pc.addTrack(track, localStream);
-          log('Added track: ' + track.kind);
         });
 
+        // Create and set local description
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
-          offerToReceiveVideo: false
+          offerToReceiveVideo: false,
+          voiceActivityDetection: true
         });
         
         await pc.setLocalDescription(offer);
-        log('Local description set, sending offer...');
+        log('Local description set (offer), sending to peer...');
 
         socket.emit('callUser', {
           targetId: targetId,
           offer: pc.localDescription,
           callerName: myName
         });
+        
+        // Start background keep-alive
+        startKeepAlive();
         
       } catch (e) {
         log('Call error: ' + e.message, 'err');
@@ -1664,86 +1612,121 @@
       log('Requesting microphone access...');
       
       try {
+        // Request with optimal settings for voice calls
         localStream = await navigator.mediaDevices.getUserMedia({
           video: false,
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            sampleRate: 48000
+            channelCount: 1,
+            sampleRate: 48000,
+            sampleSize: 16
           }
         });
         
-        log('Microphone access granted. Tracks: ' + localStream.getAudioTracks().length);
+        const audioTracks = localStream.getAudioTracks();
+        log('Microphone access granted. Tracks: ' + audioTracks.length);
+        
+        if (audioTracks.length > 0) {
+          const settings = audioTracks[0].getSettings();
+          log('Audio settings: ' + JSON.stringify(settings));
+        }
+        
         return localStream;
         
       } catch (e) {
         log('Microphone error: ' + e.message, 'err');
-        throw new Error('Microphone access denied. Please allow microphone access and try again.');
+        throw new Error('Microphone access denied. Please allow microphone access.');
       }
     }
 
-    function createPC() {
+    async function createPC() {
       log('Creating peer connection...');
       
       if (!iceServers) {
-        log('Warning: ICE servers not loaded, using defaults', 'warn');
-        iceServers = {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        };
+        iceServers = getDefaultIceServers();
       }
       
-      pc = new RTCPeerConnection(iceServers);
+      const config = {
+        ...iceServers,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        sdpSemantics: 'unified-plan'
+      };
       
-      pc.ontrack = (e) => {
-        log('Received remote track: ' + e.track.kind);
+      pc = new RTCPeerConnection(config);
+      remoteStream = new MediaStream();
+      
+      // Handle incoming tracks - CRITICAL FIX
+      pc.ontrack = (event) => {
+        log('🔊 Received remote track: ' + event.track.kind + ', readyState: ' + event.track.readyState);
         
-        if (e.track.kind === 'audio' && e.streams[0]) {
-          remoteAudioEl.srcObject = e.streams[0];
+        if (event.track.kind === 'audio') {
+          // Add track to remote stream
+          remoteStream.addTrack(event.track);
+          
+          // Attach stream to audio element
+          remoteAudioEl.srcObject = remoteStream;
           remoteAudioEl.volume = 1.0;
           remoteAudioEl.muted = false;
           
+          // Ensure audio plays
           playRemoteAudio();
+          
+          // Monitor track state
+          event.track.onended = () => {
+            log('Remote audio track ended', 'warn');
+          };
+          
+          event.track.onmute = () => {
+            log('Remote audio track muted', 'warn');
+          };
+          
+          event.track.onunmute = () => {
+            log('Remote audio track unmuted');
+          };
         }
       };
 
-      pc.onicecandidate = (e) => {
-        if (e.candidate && callTarget) {
-          log('Sending ICE candidate');
+      pc.onicecandidate = (event) => {
+        if (event.candidate && callTarget) {
+          log('Sending ICE candidate: ' + event.candidate.candidate.slice(0, 50));
           socket.emit('iceCandidate', {
             targetId: callTarget,
-            candidate: e.candidate
+            candidate: event.candidate
           });
+        } else if (!event.candidate) {
+          log('ICE gathering complete');
         }
       };
 
       pc.oniceconnectionstatechange = () => {
         log('ICE state: ' + pc.iceConnectionState);
+        updateAudioDebug();
         
         switch (pc.iceConnectionState) {
+          case 'checking':
+            document.getElementById('callStatusText').textContent = 'Connecting...';
+            break;
           case 'connected':
           case 'completed':
             setCallConnected();
             break;
           case 'failed':
-            log('ICE failed, attempting restart...', 'warn');
-            pc.restartIce();
+            log('ICE failed, restarting...', 'warn');
             document.getElementById('callStatusText').textContent = 'Reconnecting...';
+            pc.restartIce();
             break;
           case 'disconnected':
             document.getElementById('callStatusText').textContent = 'Connection unstable...';
-            break;
-          case 'closed':
-            log('ICE connection closed');
             break;
         }
       };
 
       pc.onconnectionstatechange = () => {
         log('Connection state: ' + pc.connectionState);
+        updateAudioDebug();
         
         if (pc.connectionState === 'connected') {
           setCallConnected();
@@ -1757,107 +1740,94 @@
       pc.onsignalingstatechange = () => {
         log('Signaling state: ' + pc.signalingState);
       };
+
+      pc.onicegatheringstatechange = () => {
+        log('ICE gathering state: ' + pc.iceGatheringState);
+      };
     }
 
-    // ===== CALL QUALITY MONITORING (2025 Best Practice) =====
-    function startStatsMonitoring() {
-      if (statsInterval) clearInterval(statsInterval);
-      
-      statsInterval = setInterval(async () => {
-        if (!pc || pc.connectionState !== 'connected') return;
-        
-        try {
-          const stats = await pc.getStats();
-          let packetsLost = 0;
-          let packetsReceived = 0;
-          let jitter = 0;
-          
-          stats.forEach(report => {
-            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-              packetsLost = report.packetsLost || 0;
-              packetsReceived = report.packetsReceived || 0;
-              jitter = report.jitter || 0;
-            }
-          });
-          
-          // Calculate quality
-          const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0;
-          const qualityEl = document.getElementById('networkQuality');
-          
-          if (lossRate < 0.01 && jitter < 0.03) {
-            qualityEl.className = 'network-quality';
-          } else if (lossRate < 0.05 && jitter < 0.1) {
-            qualityEl.className = 'network-quality fair';
-          } else {
-            qualityEl.className = 'network-quality poor';
-          }
-        } catch (e) {
-          log('Stats error: ' + e.message, 'warn');
-        }
-      }, 2000);
-    }
-
-    function stopStatsMonitoring() {
-      if (statsInterval) {
-        clearInterval(statsInterval);
-        statsInterval = null;
-      }
-    }
-
+    // ===== PLAY REMOTE AUDIO - CRITICAL FUNCTION =====
     async function playRemoteAudio() {
+      log('Attempting to play remote audio...');
+      
+      // Make sure audio context is running
+      if (audioContext && audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+          log('AudioContext resumed for playback');
+        } catch (e) {
+          log('Could not resume AudioContext: ' + e.message, 'warn');
+        }
+      }
+      
+      // Configure audio element
+      remoteAudioEl.volume = 1.0;
+      remoteAudioEl.muted = false;
+      remoteAudioEl.autoplay = true;
+      remoteAudioEl.playsInline = true;
+      
       try {
         await remoteAudioEl.play();
-        log('Remote audio playing');
+        log('✅ Remote audio playing successfully!');
         setCallConnected();
       } catch (err) {
         log('Audio autoplay blocked: ' + err.message, 'warn');
         document.getElementById('callStatusText').textContent = 'Tap screen to enable audio';
         
+        // Add click handlers to enable audio
         const enableAudio = async () => {
           try {
+            if (audioContext && audioContext.state === 'suspended') {
+              await audioContext.resume();
+            }
             await remoteAudioEl.play();
-            log('Audio enabled after tap');
+            log('✅ Audio enabled after user interaction');
             setCallConnected();
-            document.getElementById('callAvatar').removeEventListener('click', enableAudio);
             document.getElementById('callScreen').removeEventListener('click', enableAudio);
+            document.getElementById('callScreen').removeEventListener('touchstart', enableAudio);
           } catch (e) {
             log('Still cannot play audio: ' + e.message, 'err');
           }
         };
         
-        document.getElementById('callAvatar').addEventListener('click', enableAudio);
         document.getElementById('callScreen').addEventListener('click', enableAudio);
+        document.getElementById('callScreen').addEventListener('touchstart', enableAudio, { passive: true });
       }
     }
 
     function addIceCandidate(candidate) {
-      if (!pc || pc.signalingState === 'closed') return;
+      if (!pc || pc.signalingState === 'closed') {
+        log('Cannot add ICE candidate - PC closed', 'warn');
+        return;
+      }
       
       pc.addIceCandidate(new RTCIceCandidate(candidate))
-        .then(() => log('ICE candidate added'))
+        .then(() => log('ICE candidate added successfully'))
         .catch(e => log('ICE candidate error: ' + e.message, 'err'));
     }
 
     function processIceQueue() {
-      log('Processing ' + iceQueue.length + ' queued ICE candidates');
-      while (iceQueue.length > 0) {
-        const candidate = iceQueue.shift();
-        addIceCandidate(candidate);
+      if (iceQueue.length > 0) {
+        log('Processing ' + iceQueue.length + ' queued ICE candidates');
+        while (iceQueue.length > 0) {
+          addIceCandidate(iceQueue.shift());
+        }
       }
     }
 
     function setCallConnected() {
-      if (document.getElementById('callStatusText').textContent === 'Connected') return;
+      if (isCallConnected) return;
+      isCallConnected = true;
       
       document.getElementById('callStatusText').textContent = 'Connected';
       document.getElementById('callAvatar').className = 'call-avatar connected';
       startCallTimer();
-      log('Call connected!');
+      log('✅ Call connected!');
+      updateAudioDebug();
     }
 
     function startCallTimer() {
       if (callTimer) return;
-      
       callSeconds = 0;
       callTimer = setInterval(() => {
         callSeconds++;
@@ -1876,6 +1846,133 @@
       callSeconds = 0;
     }
 
+    // ===== BACKGROUND AUDIO KEEP-ALIVE =====
+    function startKeepAlive() {
+      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      
+      // Keep connection alive in background
+      keepAliveInterval = setInterval(() => {
+        if (pc && isCallConnected) {
+          // Send a small data message to keep connection alive
+          if (localStream) {
+            const tracks = localStream.getAudioTracks();
+            if (tracks.length > 0 && !tracks[0].enabled && !micOff) {
+              log('Detected audio track disabled, re-enabling', 'warn');
+              tracks[0].enabled = true;
+            }
+          }
+          
+          // Check if audio is still playing
+          if (remoteAudioEl.paused && remoteStream && remoteStream.getAudioTracks().length > 0) {
+            log('Remote audio paused, attempting to resume...', 'warn');
+            remoteAudioEl.play().catch(() => {});
+          }
+        }
+      }, 5000);
+      
+      // Prevent device sleep during call
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => {
+          log('Wake lock acquired');
+          // Store reference to release later
+          window.wakeLock = lock;
+        }).catch(e => {
+          log('Wake lock failed: ' + e.message, 'warn');
+        });
+      }
+    }
+
+    function stopKeepAlive() {
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+      }
+      
+      // Release wake lock
+      if (window.wakeLock) {
+        window.wakeLock.release().then(() => {
+          log('Wake lock released');
+          window.wakeLock = null;
+        }).catch(() => {});
+      }
+    }
+
+    // ===== STATS MONITORING =====
+    function startStatsMonitoring() {
+      if (statsInterval) clearInterval(statsInterval);
+      
+      statsInterval = setInterval(async () => {
+        if (!pc || pc.connectionState !== 'connected') return;
+        
+        try {
+          const stats = await pc.getStats();
+          let packetsLost = 0;
+          let packetsReceived = 0;
+          let bytesReceived = 0;
+          let jitter = 0;
+          
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              packetsLost = report.packetsLost || 0;
+              packetsReceived = report.packetsReceived || 0;
+              bytesReceived = report.bytesReceived || 0;
+              jitter = report.jitter || 0;
+            }
+          });
+          
+          const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0;
+          const qualityEl = document.getElementById('networkQuality');
+          
+          if (lossRate < 0.01 && jitter < 0.03) {
+            qualityEl.className = 'network-quality';
+          } else if (lossRate < 0.05 && jitter < 0.1) {
+            qualityEl.className = 'network-quality fair';
+          } else {
+            qualityEl.className = 'network-quality poor';
+          }
+          
+          // Update debug display
+          if (audioDebugEl.classList.contains('show')) {
+            audioDebugEl.innerHTML = `
+              Packets: ${packetsReceived}<br>
+              Lost: ${packetsLost} (${(lossRate * 100).toFixed(1)}%)<br>
+              Bytes: ${(bytesReceived / 1024).toFixed(1)}KB<br>
+              Jitter: ${(jitter * 1000).toFixed(1)}ms
+            `;
+          }
+        } catch (e) {
+          log('Stats error: ' + e.message, 'warn');
+        }
+      }, 2000);
+    }
+
+    function stopStatsMonitoring() {
+      if (statsInterval) {
+        clearInterval(statsInterval);
+        statsInterval = null;
+      }
+    }
+
+    function updateAudioDebug() {
+      if (!audioDebugEl.classList.contains('show')) return;
+      
+      let info = '';
+      if (pc) {
+        info += `ICE: ${pc.iceConnectionState}<br>`;
+        info += `Conn: ${pc.connectionState}<br>`;
+      }
+      if (localStream) {
+        const tracks = localStream.getAudioTracks();
+        info += `Local: ${tracks.length > 0 ? (tracks[0].enabled ? 'on' : 'off') : 'none'}<br>`;
+      }
+      if (remoteStream) {
+        const tracks = remoteStream.getAudioTracks();
+        info += `Remote: ${tracks.length > 0 ? tracks[0].readyState : 'none'}<br>`;
+      }
+      info += `Audio: ${remoteAudioEl.paused ? 'paused' : 'playing'}`;
+      audioDebugEl.innerHTML = info;
+    }
+
     // ===== ACCEPT CALL =====
     document.getElementById('acceptBtn').addEventListener('click', async () => {
       log('Accepting call...');
@@ -1884,6 +1981,8 @@
       callTarget = incomingData.callerId;
       callTargetName = incomingData.callerName;
       iceQueue = [];
+      remoteDescriptionSet = false;
+      isCallConnected = false;
 
       initAudioContext();
 
@@ -1895,20 +1994,25 @@
 
       try {
         await getAudio();
-        createPC();
+        await createPC();
         
         localStream.getTracks().forEach(track => {
+          log('Adding local track: ' + track.kind);
           pc.addTrack(track, localStream);
-          log('Added track: ' + track.kind);
         });
 
+        // Set remote description first (the offer)
         await pc.setRemoteDescription(new RTCSessionDescription(incomingData.offer));
-        log('Remote description set');
+        remoteDescriptionSet = true;
+        log('Remote description set (offer)');
+        
+        // Process any queued ICE candidates
         processIceQueue();
 
+        // Create and send answer
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        log('Local description set, sending answer...');
+        log('Local description set (answer), sending to peer...');
 
         socket.emit('answerCall', {
           targetId: incomingData.callerId,
@@ -1916,6 +2020,7 @@
         });
 
         incomingData = null;
+        startKeepAlive();
         
       } catch (e) {
         log('Accept error: ' + e.message, 'err');
@@ -1950,8 +2055,10 @@
 
     function cleanupCall() {
       log('Cleaning up call...');
+      
       stopCallTimer();
       stopStatsMonitoring();
+      stopKeepAlive();
       
       if (localStream) {
         localStream.getTracks().forEach(track => {
@@ -1959,6 +2066,11 @@
           log('Stopped local track: ' + track.kind);
         });
         localStream = null;
+      }
+      
+      if (remoteStream) {
+        remoteStream.getTracks().forEach(track => track.stop());
+        remoteStream = null;
       }
       
       if (pc) {
@@ -1984,6 +2096,8 @@
       iceQueue = [];
       micOff = false;
       speakerOff = false;
+      remoteDescriptionSet = false;
+      isCallConnected = false;
       
       document.getElementById('micBtn').classList.remove('off');
       document.getElementById('micBtn').textContent = '🎤';
@@ -1998,11 +2112,11 @@
       micOff = !micOff;
       localStream.getAudioTracks().forEach(track => {
         track.enabled = !micOff;
+        log('Mic track enabled: ' + track.enabled);
       });
       
       this.classList.toggle('off', micOff);
       this.textContent = micOff ? '🔇' : '🎤';
-      log('Microphone ' + (micOff ? 'muted' : 'unmuted'));
     });
 
     // ===== SPEAKER TOGGLE =====
@@ -2012,12 +2126,36 @@
       
       this.classList.toggle('off', speakerOff);
       this.textContent = speakerOff ? '🔈' : '🔊';
-      log('Speaker ' + (speakerOff ? 'muted' : 'unmuted'));
+      log('Speaker muted: ' + speakerOff);
     });
 
-    // ===== VISIBILITY CHANGE =====
+    // ===== VISIBILITY CHANGE - CRITICAL FOR BACKGROUND =====
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && remoteAudioEl.srcObject) {
+      log('Visibility changed: ' + (document.hidden ? 'hidden' : 'visible'));
+      
+      if (!document.hidden) {
+        // Page became visible
+        if (remoteAudioEl.srcObject && remoteAudioEl.paused) {
+          log('Resuming audio after visibility change...');
+          remoteAudioEl.play().catch(e => {
+            log('Could not resume audio: ' + e.message, 'warn');
+          });
+        }
+        
+        if (audioContext && audioContext.state === 'suspended') {
+          audioContext.resume().catch(() => {});
+        }
+      }
+    });
+
+    // Handle page freeze/resume (mobile specific)
+    document.addEventListener('freeze', () => {
+      log('Page frozen', 'warn');
+    });
+
+    document.addEventListener('resume', () => {
+      log('Page resumed');
+      if (remoteAudioEl.srcObject) {
         remoteAudioEl.play().catch(() => {});
       }
     });
@@ -2025,13 +2163,10 @@
     // ===== NOTIFICATIONS =====
     async function requestNotificationPermission() {
       if (!('Notification' in window)) return;
-      if (Notification.permission === 'granted') return;
-      
-      try {
-        const permission = await Notification.requestPermission();
-        log('Notification permission: ' + permission);
-      } catch (e) {
-        log('Notification permission error: ' + e.message, 'warn');
+      if (Notification.permission !== 'granted') {
+        try {
+          await Notification.requestPermission();
+        } catch (e) {}
       }
     }
 
@@ -2044,7 +2179,6 @@
         const notification = new Notification(title, {
           body: body,
           icon: '/icon-192.png',
-          badge: '/icon-72.png',
           tag: 'chat-notification',
           renotify: true,
           data: data
@@ -2053,118 +2187,22 @@
         notification.onclick = () => {
           window.focus();
           notification.close();
-          
-          if (data.messageId) {
-            const msgEl = document.getElementById('msg-' + data.messageId);
-            if (msgEl) {
-              msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              msgEl.style.animation = 'highlight 2s ease';
-            }
-          }
         };
         
-        // Auto-close after 5 seconds
         setTimeout(() => notification.close(), 5000);
-      } catch (e) {
-        log('Notification error: ' + e.message, 'warn');
-      }
+      } catch (e) {}
     }
 
-    // ===== SERVICE WORKER REGISTRATION =====
+    // ===== SERVICE WORKER =====
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', async () => {
         try {
-          const registration = await navigator.serviceWorker.register('/sw.js', {
-            scope: '/'
-          });
-          
-          log('SW registered: ' + registration.scope);
-          
-          // Check for updates
-          registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            log('SW update found');
-            
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                showUpdateNotification();
-              }
-            });
-          });
-          
-          // Handle messages from service worker
-          navigator.serviceWorker.addEventListener('message', (event) => {
-            log('Message from SW: ' + JSON.stringify(event.data));
-            
-            if (event.data.type === 'NOTIFICATION_CLICK') {
-              const data = event.data.data;
-              if (data.messageId) {
-                const msgEl = document.getElementById('msg-' + data.messageId);
-                if (msgEl) {
-                  msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  msgEl.style.animation = 'highlight 2s ease';
-                }
-              }
-            }
-          });
-          
-        } catch (err) {
-          log('SW registration failed: ' + err.message, 'err');
-        }
+          await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        } catch (e) {}
       });
     }
 
-    function showUpdateNotification() {
-      const update = document.createElement('div');
-      update.id = 'updateNotification';
-      update.innerHTML = `
-        <div style="
-          position: fixed;
-          bottom: 80px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: var(--info);
-          color: white;
-          padding: 12px 20px;
-          border-radius: 25px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-          z-index: 1000;
-          font-size: 14px;
-        ">
-          <span>New version available</span>
-          <button onclick="updateApp()" style="
-            background: white;
-            color: var(--info);
-            border: none;
-            padding: 6px 12px;
-            border-radius: 15px;
-            font-weight: bold;
-            cursor: pointer;
-          ">Update</button>
-          <button onclick="this.parentElement.parentElement.remove()" style="
-            background: transparent;
-            color: white;
-            border: none;
-            font-size: 18px;
-            cursor: pointer;
-            padding: 0 5px;
-          ">×</button>
-        </div>
-      `;
-      document.body.appendChild(update);
-    }
-
-    window.updateApp = function() {
-      if (navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'SKIP_WAITING' });
-      }
-      window.location.reload();
-    };
-
-    // ===== AUTO-REJOIN ON PAGE LOAD =====
+    // ===== AUTO-REJOIN =====
     window.addEventListener('load', () => {
       const savedRoom = localStorage.getItem('chatRoom');
       const savedName = localStorage.getItem('chatName');
@@ -2177,92 +2215,8 @@
       }
     });
 
-    // ===== BEFORE UNLOAD =====
     window.addEventListener('beforeunload', () => {
-      if (pc) {
-        cleanupCall();
-      }
-    });
-
-    // ===== INSTALL PROMPT (PWA) =====
-    let deferredPrompt = null;
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      
-      // Show install button after user joins a room
-      setTimeout(() => {
-        if (deferredPrompt && myRoom) {
-          showInstallPrompt();
-        }
-      }, 30000);
-    });
-
-    function showInstallPrompt() {
-      if (!deferredPrompt) return;
-      
-      const install = document.createElement('div');
-      install.id = 'installPrompt';
-      install.innerHTML = `
-        <div style="
-          position: fixed;
-          bottom: 80px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: linear-gradient(135deg, var(--primary), var(--primary-light));
-          color: white;
-          padding: 12px 20px;
-          border-radius: 25px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-          z-index: 1000;
-          font-size: 14px;
-        ">
-          <span>📱 Install app for better experience</span>
-          <button onclick="installApp()" style="
-            background: white;
-            color: var(--primary);
-            border: none;
-            padding: 6px 12px;
-            border-radius: 15px;
-            font-weight: bold;
-            cursor: pointer;
-          ">Install</button>
-          <button onclick="dismissInstall()" style="
-            background: transparent;
-            color: white;
-            border: none;
-            font-size: 18px;
-            cursor: pointer;
-            padding: 0 5px;
-          ">×</button>
-        </div>
-      `;
-      document.body.appendChild(install);
-    }
-
-    window.installApp = async function() {
-      if (!deferredPrompt) return;
-      
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      log('Install prompt outcome: ' + outcome);
-      
-      deferredPrompt = null;
-      dismissInstall();
-    };
-
-    window.dismissInstall = function() {
-      const el = document.getElementById('installPrompt');
-      if (el) el.remove();
-    };
-
-    window.addEventListener('appinstalled', () => {
-      log('App installed');
-      deferredPrompt = null;
+      if (pc) cleanupCall();
     });
   </script>
 </body>
