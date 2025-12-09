@@ -1,9 +1,9 @@
 // Service Worker for Private Chat
 // Handles caching, offline support, and push notifications
 
-const CACHE_NAME = 'private-chat-v2';
-const STATIC_CACHE = 'private-chat-static-v2';
-const DYNAMIC_CACHE = 'private-chat-dynamic-v2';
+const CACHE_NAME = 'private-chat-v3';
+const STATIC_CACHE = 'private-chat-static-v3';
+const DYNAMIC_CACHE = 'private-chat-dynamic-v3';
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
@@ -16,7 +16,7 @@ const STATIC_ASSETS = [
 // ===== INSTALL EVENT =====
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing service worker...');
-  
+
   event.waitUntil(
     caches.open(STATIC_CACHE)
       .then((cache) => {
@@ -36,7 +36,7 @@ self.addEventListener('install', (event) => {
 // ===== ACTIVATE EVENT =====
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activating service worker...');
-  
+
   event.waitUntil(
     Promise.all([
       // Clean up old caches
@@ -44,9 +44,9 @@ self.addEventListener('activate', (event) => {
         return Promise.all(
           cacheNames
             .filter((name) => {
-              return name !== STATIC_CACHE && 
-                     name !== DYNAMIC_CACHE && 
-                     name !== CACHE_NAME;
+              return name !== STATIC_CACHE &&
+                name !== DYNAMIC_CACHE &&
+                name !== CACHE_NAME;
             })
             .map((name) => {
               console.log('[SW] Deleting old cache:', name);
@@ -87,9 +87,9 @@ self.addEventListener('fetch', (event) => {
         .catch(() => {
           return new Response(
             JSON.stringify({ error: 'Offline', message: 'Network unavailable' }),
-            { 
-              status: 503, 
-              headers: { 'Content-Type': 'application/json' } 
+            {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' }
             }
           );
         })
@@ -173,7 +173,7 @@ function fetchAndCache(request, cacheName) {
 // ===== PUSH NOTIFICATIONS =====
 self.addEventListener('push', (event) => {
   console.log('[SW] Push received');
-  
+
   let data = {
     title: 'Private Chat',
     body: 'New message received',
@@ -210,13 +210,13 @@ self.addEventListener('push', (event) => {
       timestamp: Date.now()
     },
     actions: [
-      { 
-        action: 'open', 
+      {
+        action: 'open',
         title: '💬 Open Chat',
         icon: '/icon-open.png'
       },
-      { 
-        action: 'dismiss', 
+      {
+        action: 'dismiss',
         title: 'Dismiss',
         icon: '/icon-close.png'
       }
@@ -239,7 +239,7 @@ self.addEventListener('push', (event) => {
 // ===== NOTIFICATION CLICK =====
 self.addEventListener('notificationclick', (event) => {
   console.log('[SW] Notification clicked:', event.action);
-  
+
   event.notification.close();
 
   // Handle dismiss action
@@ -250,9 +250,9 @@ self.addEventListener('notificationclick', (event) => {
   const urlToOpen = event.notification.data?.url || '/';
 
   event.waitUntil(
-    clients.matchAll({ 
-      type: 'window', 
-      includeUncontrolled: true 
+    clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true
     }).then((clientList) => {
       // Check if app is already open
       for (const client of clientList) {
@@ -269,7 +269,7 @@ self.addEventListener('notificationclick', (event) => {
           });
         }
       }
-      
+
       // App not open, open new window
       return clients.openWindow(urlToOpen);
     }).catch((err) => {
@@ -281,7 +281,7 @@ self.addEventListener('notificationclick', (event) => {
 // ===== NOTIFICATION CLOSE =====
 self.addEventListener('notificationclose', (event) => {
   console.log('[SW] Notification closed');
-  
+
   // Track notification dismissal if needed
   const data = event.notification.data;
   if (data?.messageId) {
@@ -292,14 +292,14 @@ self.addEventListener('notificationclose', (event) => {
 // ===== MESSAGE HANDLER (from main thread) =====
 self.addEventListener('message', (event) => {
   console.log('[SW] Message received:', event.data);
-  
+
   const { type, payload } = event.data || {};
 
   switch (type) {
     case 'SKIP_WAITING':
       self.skipWaiting();
       break;
-      
+
     case 'CACHE_URLS':
       if (Array.isArray(payload)) {
         event.waitUntil(
@@ -309,7 +309,7 @@ self.addEventListener('message', (event) => {
         );
       }
       break;
-      
+
     case 'CLEAR_CACHE':
       event.waitUntil(
         caches.keys().then((names) => {
@@ -317,7 +317,7 @@ self.addEventListener('message', (event) => {
         })
       );
       break;
-      
+
     case 'GET_CACHE_STATUS':
       event.waitUntil(
         getCacheStatus().then((status) => {
@@ -349,20 +349,20 @@ self.addEventListener('message', (event) => {
 async function getCacheStatus() {
   const cacheNames = await caches.keys();
   const status = {};
-  
+
   for (const name of cacheNames) {
     const cache = await caches.open(name);
     const keys = await cache.keys();
     status[name] = keys.length;
   }
-  
+
   return status;
 }
 
 // ===== SYNC EVENT (Background Sync) =====
 self.addEventListener('sync', (event) => {
   console.log('[SW] Background sync:', event.tag);
-  
+
   if (event.tag === 'send-messages') {
     event.waitUntil(sendQueuedMessages());
   }
@@ -384,7 +384,7 @@ async function sendQueuedMessages() {
 // ===== PERIODIC SYNC (if supported) =====
 self.addEventListener('periodicsync', (event) => {
   console.log('[SW] Periodic sync:', event.tag);
-  
+
   if (event.tag === 'check-messages') {
     event.waitUntil(checkForNewMessages());
   }

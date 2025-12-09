@@ -1055,7 +1055,16 @@
 <body>
 
   <!-- Connection Status -->
-  <div class="connection-status" id="connectionStatus">Connecting...</div>
+  <div class="connection-status" id="connectionStatus">Connecting to server...</div>
+  <script>
+    // Show helpful message if connection is slow (server waking up)
+    setTimeout(() => {
+      const status = document.getElementById('connectionStatus');
+      if (status.textContent.includes('Connecting')) {
+        status.textContent = "Server might be waking up (free tier), please wait...";
+      }
+    }, 5000);
+  </script>
 
   <!-- Offline Banner -->
   <div class="offline-banner" id="offlineBanner">You are offline. Messages will be sent when connection is restored.
@@ -1141,6 +1150,9 @@
       <div class="call-avatar ringing" id="callAvatar">📞</div>
       <div class="call-name" id="callName">User</div>
       <div class="call-status-text" id="callStatusText">Connecting...</div>
+      <button id="reconnectBtn"
+        style="display: none; margin-bottom: 20px; background: var(--warning); border: none; padding: 8px 16px; border-radius: 20px; color: #000; font-size: 14px; cursor: pointer;">↻
+        Reconnect</button>
       <div class="call-timer" id="callTimer">00:00</div>
       <div class="network-quality" id="networkQuality">
         <div class="bar"></div>
@@ -1148,16 +1160,22 @@
         <div class="bar"></div>
         <div class="bar"></div>
       </div>
+      <div id="callStats" style="font-size: 12px; color: yellow; margin-bottom: 10px; font-family: monospace;">Waiting
+        for data...</div>
+      <div class="audio-debug" id="audioDebug"></div>
       <div class="audio-debug" id="audioDebug"></div>
     </div>
     <div class="call-controls">
       <button class="ctrl-btn speaker" id="speakerBtn" aria-label="Toggle speaker">🔊</button>
       <button class="ctrl-btn mic" id="micBtn" aria-label="Toggle microphone">🎤</button>
+      <button class="ctrl-btn" id="testAudioBtn"
+        style="background: #e94560; font-size: 14px; width: auto; padding: 0 15px; border-radius: 20px;">Test
+        Sound</button>
       <button class="ctrl-btn end" id="endBtn" aria-label="End call">✕</button>
     </div>
     <!-- Multiple audio elements for better compatibility -->
     <!-- Remove autoplay to control earpiece/speaker routing -->
-    <audio id="remoteAudio" playsinline></audio>
+    <audio id="remoteAudio" autoplay playsinline></audio>
     <audio id="localAudioMonitor" muted></audio>
   </div>
 
@@ -1463,6 +1481,14 @@
       // Retry pending messages
       setTimeout(() => retryPendingMessages(), 1000);
     });
+
+    // ===== KEEP-ALIVE PING =====
+    // Periodically fetch strict HTTP endpoint to keep server awake
+    setInterval(() => {
+      if (isOnline) {
+        fetch('/ping').catch(() => { });
+      }
+    }, 5 * 60 * 1000); // Pulse every 5 minutes
 
     socket.on('disconnect', (reason) => {
       isConnected = false;
@@ -2252,6 +2278,14 @@
             startCall(u.socketId, u.username);
           };
           div.appendChild(btn);
+        } else if (!isOnline && u.lastSeen) {
+          const date = new Date(u.lastSeen);
+          const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const span = document.createElement('span');
+          span.style.fontSize = '12px';
+          span.style.color = 'var(--text-muted)';
+          span.textContent = timeStr;
+          div.appendChild(span);
         }
         list.appendChild(div);
       });
@@ -2302,8 +2336,10 @@
           voiceActivityDetection: true
         });
 
-        await pc.setLocalDescription(offer);
-        log('Local description set (offer), sending to peer...');
+        // Apply low-bandwidth optimizations to SDP
+        const modifiedSdp = sdpMunge(offer.sdp);
+        await pc.setLocalDescription({ type: offer.type, sdp: modifiedSdp });
+        log('Local description set (offer) with low-bw optimizations');
 
         socket.emit('callUser', {
           targetId: targetId,
@@ -2332,9 +2368,10 @@
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            channelCount: 1,
-            sampleRate: 48000,
-            sampleSize: 16
+            // Remove strict constraints for better mobile compatibility
+            // channelCount: 1,
+            // sampleRate: 48000, 
+            // sampleSize: 16
           }
         });
 
@@ -2433,8 +2470,17 @@
             break;
           case 'disconnected':
             document.getElementById('callStatusText').textContent = 'Connection unstable...';
+            document.getElementById('reconnectBtn').style.display = 'block';
             break;
         }
+      };
+
+      // Reconnect button handler
+      document.getElementById('reconnectBtn').onclick = () => {
+        log('Manual ICE restart requested');
+        document.getElementById('reconnectBtn').style.display = 'none';
+        document.getElementById('callStatusText').textContent = 'Reconnecting...';
+        if (pc) pc.restartIce();
       };
 
       pc.onconnectionstatechange = () => {
@@ -2463,7 +2509,7 @@
     async function playRemoteAudio() {
       log('Attempting to play remote audio...');
 
-      // Make sure audio context is running
+      // Make sure audio context is running - iOS requirement
       if (audioContext && audioContext.state === 'suspended') {
         try {
           await audioContext.resume();
@@ -2473,13 +2519,16 @@
         }
       }
 
-      // Configure audio element for earpiece by default
+      // Configure audio element
       remoteAudioEl.volume = 1.0;
       remoteAudioEl.muted = false;
       remoteAudioEl.playsInline = true;
 
-      // Set initial audio output to earpiece mode
-      await setAudioOutput(false); // false = earpiece mode
+      // Force earpiece on iOS by setting audio session category if possible (via potential native wrappers or PWA adjustments)
+      // For standard web, we rely on the browser's default routing which is usually earpiece for calls
+
+      // Attempt to set output to earpiece by default
+      await setAudioOutput(false);
 
       try {
         await remoteAudioEl.play();
@@ -2590,25 +2639,18 @@
         }
       }
 
-      // Method 2: Volume-based workaround for iOS/Android
-      // Lower volume tends to route to earpiece on some devices
-      if (!useSpeaker) {
-        // For earpiece mode on mobile
-        remoteAudioEl.volume = 0.7; // Slightly lower volume
-        log('Using volume workaround for earpiece mode');
-      } else {
-        remoteAudioEl.volume = 1.0;
-        log('Using full volume for speaker mode');
-      }
+      // Method 2: Volume-based workaround - REMOVED, always use max volume
+      remoteAudioEl.volume = 1.0;
+      log('Audio volume set to 100%');
 
-      // Method 3: For iOS Safari - try to use AudioContext routing
+      // Method 3: For iOS Safari - AudioContext routing hint
       if (audioContext && !useSpeaker) {
         try {
-          // Create a gain node with lower output
-          // This is a hint to the OS to use earpiece
-          log('AudioContext routing hint applied');
+          // This doesn't actually route audio, but resuming the context might help iOS
+          // decide this is a call.
+          if (audioContext.state === 'suspended') await audioContext.resume();
         } catch (e) {
-          log('AudioContext routing failed: ' + e.message, 'warn');
+          log('AudioContext resume failed: ' + e.message, 'warn');
         }
       }
 
@@ -2721,7 +2763,7 @@
     function startStatsMonitoring() {
       if (statsInterval) clearInterval(statsInterval);
 
-      statsInterval = setInterval(async () => {
+      StatsInterval = setInterval(async () => {
         if (!pc || pc.connectionState !== 'connected') return;
 
         try {
@@ -2729,7 +2771,15 @@
           let packetsLost = 0;
           let packetsReceived = 0;
           let bytesReceived = 0;
+          let bytesSent = 0;
           let jitter = 0;
+
+          // Previous values for rate calculation
+          const prevBytesRx = window.prevBytesRx || 0;
+          const prevBytesTx = window.prevBytesTx || 0;
+          const prevTime = window.prevStatsTime || Date.now();
+          const now = Date.now();
+          const timeDiff = (now - prevTime) / 1000;
 
           stats.forEach(report => {
             if (report.type === 'inbound-rtp' && report.kind === 'audio') {
@@ -2737,8 +2787,31 @@
               packetsReceived = report.packetsReceived || 0;
               bytesReceived = report.bytesReceived || 0;
               jitter = report.jitter || 0;
+            } else if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+              bytesSent = report.bytesSent || 0;
             }
           });
+
+          // Calculate rates
+          const rxRate = timeDiff > 0 ? ((bytesReceived - prevBytesRx) / 1024 / timeDiff).toFixed(1) : 0;
+          const txRate = timeDiff > 0 ? ((bytesSent - prevBytesTx) / 1024 / timeDiff).toFixed(1) : 0;
+
+          // Store current values
+          window.prevBytesRx = bytesReceived;
+          window.prevBytesTx = bytesSent;
+          window.prevStatsTime = now;
+
+          // Update UI
+          const statsEl = document.getElementById('callStats');
+          if (statsEl) {
+            statsEl.innerHTML = `RX: ${rxRate} KB/s | TX: ${txRate} KB/s`;
+            if (parseFloat(rxRate) === 0 && callSeconds > 5) {
+              statsEl.style.color = 'red';
+              statsEl.innerHTML += '<br>⚠️ No audio received';
+            } else {
+              statsEl.style.color = '#4ade80';
+            }
+          }
 
           const lossRate = packetsReceived > 0 ? packetsLost / packetsReceived : 0;
           const qualityEl = document.getElementById('networkQuality');
@@ -2754,16 +2827,17 @@
           // Update debug display
           if (audioDebugEl.classList.contains('show')) {
             audioDebugEl.innerHTML = `
-              Packets: ${packetsReceived}<br>
-              Lost: ${packetsLost} (${(lossRate * 100).toFixed(1)}%)<br>
-              Bytes: ${(bytesReceived / 1024).toFixed(1)}KB<br>
-              Jitter: ${(jitter * 1000).toFixed(1)}ms
-            `;
+                  Packets: ${packetsReceived}<br>
+                  Lost: ${packetsLost} (${(lossRate * 100).toFixed(1)}%)<br>
+                  RX Rate: ${rxRate} KB/s<br>
+                  TX Rate: ${txRate} KB/s<br>
+                  Jitter: ${(jitter * 1000).toFixed(1)}ms
+                `;
           }
         } catch (e) {
           log('Stats error: ' + e.message, 'warn');
         }
-      }, 2000);
+      }, 1000); // Update every second for smoother rate
     }
 
     function stopStatsMonitoring() {
@@ -2831,8 +2905,10 @@
 
         // Create and send answer
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        log('Local description set (answer), sending to peer...');
+        // Apply low-bandwidth optimizations to SDP
+        const modifiedSdp = sdpMunge(answer.sdp);
+        await pc.setLocalDescription({ type: answer.type, sdp: modifiedSdp });
+        log('Local description set (answer) with low-bw optimizations');
 
         socket.emit('answerCall', {
           targetId: incomingData.callerId,
@@ -2909,6 +2985,7 @@
       document.getElementById('callScreen').classList.remove('active');
       document.getElementById('incomingModal').classList.remove('show');
       document.getElementById('networkQuality').className = 'network-quality';
+      document.getElementById('reconnectBtn').style.display = 'none';
 
       callTarget = null;
       callTargetName = '';
@@ -2994,6 +3071,68 @@
         speakerLongPress = null;
       }
     });
+
+    // ===== TEST AUDIO BUTTON =====
+    document.getElementById('testAudioBtn').addEventListener('click', () => {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.5);
+
+      gain.gain.setValueAtTime(0.5, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+
+      log('🔊 Playing test sound...');
+    });
+
+    // ===== SDP MUNGING FOR LOW BANDWIDTH =====
+    function sdpMunge(sdp) {
+      log('Applying low-bandwidth optimizations to SDP...');
+      const sdpLines = sdp.split('\r\n');
+      const mLineIndex = sdpLines.findIndex(l => l.startsWith('m=audio'));
+      if (mLineIndex === -1) return sdp;
+
+      // Find opus payload type
+      let opusPayload = null;
+      for (let i = mLineIndex; i < sdpLines.length; i++) {
+        if (sdpLines[i].startsWith('a=rtpmap:') && sdpLines[i].includes('opus/48000')) {
+          opusPayload = sdpLines[i].split(':')[1].split(' ')[0];
+          break;
+        }
+      }
+
+      if (opusPayload) {
+        // Check if fmtp line exists
+        const fmtpLineIndex = sdpLines.findIndex(l => l.startsWith(`a=fmtp:${opusPayload}`));
+        if (fmtpLineIndex !== -1) {
+          // Append parameters to existing line
+          let fmtp = sdpLines[fmtpLineIndex];
+          if (!fmtp.includes('useinbandfec=1')) fmtp += ';useinbandfec=1'; // Forward Error Correction
+          if (!fmtp.includes('usedtx=1')) fmtp += ';usedtx=1';             // Discontinuous Transmission
+          if (!fmtp.includes('maxaveragebitrate=')) {
+            // Limit bitrate to 20kbps for voice (standard is often 32+)
+            fmtp += ';maxaveragebitrate=20000';
+          }
+          sdpLines[fmtpLineIndex] = fmtp;
+        } else {
+          // Add new fmtp line after rtpmap
+          const rtpmapIndex = sdpLines.findIndex(l => l.startsWith(`a=rtpmap:${opusPayload}`));
+          if (rtpmapIndex !== -1) {
+            sdpLines.splice(rtpmapIndex + 1, 0, `a=fmtp:${opusPayload} useinbandfec=1;usedtx=1;maxaveragebitrate=20000`);
+          }
+        }
+      }
+      return sdpLines.join('\r\n');
+    }
 
     // ===== VISIBILITY CHANGE - CRITICAL FOR BACKGROUND =====
     document.addEventListener('visibilitychange', () => {

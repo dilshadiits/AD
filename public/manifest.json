@@ -1,7 +1,7 @@
 {
   "name": "Private Chat",
   "short_name": "Chat",
-  "description": "Private chat application with audio calls",
+  "description": "Private chat with secure, low-bandwidth audio calls",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -9,7 +9,10 @@
   "theme_color": "#e94560",
   "scope": "/",
   "lang": "en",
-  "categories": ["communication", "social"],
+  "categories": [
+    "communication",
+    "social"
+  ],
   "icons": [
     {
       "src": "/icon-72.png",
@@ -66,7 +69,12 @@
       "short_name": "Join",
       "description": "Join a chat room",
       "url": "/?action=join",
-      "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "/icon-96.png",
+          "sizes": "96x96"
+        }
+      ]
     }
   ],
   "screenshots": [

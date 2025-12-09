@@ -77,7 +77,8 @@ function getUsers(room) {
   return Array.from(rooms.get(room).entries()).map(([id, data]) => ({
     socketId: id,
     username: data.username,
-    online: data.online
+    online: data.online,
+    lastSeen: data.lastSeen
   }));
 }
 
@@ -678,6 +679,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Lightweight ping for keep-alive
+app.get('/ping', (req, res) => {
+  res.send('pong');
+});
+
 // ================== ICE SERVERS ENDPOINT ==================
 app.get('/api/ice-servers', (req, res) => {
   // Return ICE server configuration
@@ -689,6 +695,9 @@ app.get('/api/ice-servers', (req, res) => {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.framasoft.org:3478' },
+      { urls: 'stun:stun.voip.blackberry.com:3478' },
       // Free TURN servers (for testing - use your own in production)
       {
         urls: 'turn:openrelay.metered.ca:80',
@@ -722,14 +731,15 @@ process.on('unhandledRejection', (reason, promise) => {
 // Prevent Render free tier from sleeping by pinging itself
 const keepAlive = () => {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  const interval = 14 * 60 * 1000; // 14 minutes
+  const interval = 10 * 60 * 1000; // 10 minutes (Render sleeps after 15)
 
   console.log(`⏰ Keep-alive set up for: ${url}`);
 
+  // Periodic self-ping
   setInterval(() => {
-    http.get(`${url}/health`, (res) => {
+    http.get(`${url}/ping`, (res) => {
       if (res.statusCode === 200) {
-        console.log('⚡ Keep-alive ping successful');
+        // console.log('⚡ Keep-alive ping successful');
       } else {
         console.error(`⚠️ Keep-alive ping failed: ${res.statusCode}`);
       }
