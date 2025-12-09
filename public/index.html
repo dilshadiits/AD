@@ -1479,14 +1479,16 @@
     function getDefaultIceServers() {
       return {
         iceServers: [
+          // Google STUN servers (reliable)
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' },
+          // Other free STUN servers
           { urls: 'stun:global.stun.twilio.com:3478' },
           { urls: 'stun:stun.framasoft.org:3478' },
-          { urls: 'stun:stun.voip.blackberry.com:3478' },
+          // Free TURN servers (for NAT traversal)
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -1501,10 +1503,20 @@
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
+          },
+          // Additional free TURN servers for redundancy
+          {
+            urls: 'turn:relay.metered.ca:80',
+            username: 'e8dd65f92c95c location6bf4bf1',
+            credential: 'DQpDQkhS3f/L4bsi'
+          },
+          {
+            urls: 'turn:relay.metered.ca:443',
+            username: 'e8dd65f92c95c6bf4bf1',
+            credential: 'DQpDQkhS3f/L4bsi'
           }
-        ],
-        iceCandidatePoolSize: 10
-
+        ]
+        // NOTE: iceCandidatePoolSize is set in createPC, not here
       };
     }
 
@@ -2473,19 +2485,38 @@
     async function getAudio() {
       log('Requesting microphone access...');
 
+      // Detect platform
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      const isAndroid = /Android/.test(navigator.userAgent);
+
+      // iOS Safari doesn't support all advanced constraints
+      const advancedConstraints = {
+        echoCancellation: { ideal: true },
+        noiseSuppression: { ideal: true },
+        autoGainControl: { ideal: true },
+        // Advanced constraints for "WhatsApp-like" quality on Chrome/Android
+        googEchoCancellation: { ideal: true },
+        googAutoGainControl: { ideal: true },
+        googNoiseSuppression: { ideal: true },
+        googHighpassFilter: { ideal: true },
+        googTypingNoiseDetection: { ideal: true },
+        channelCount: { ideal: 1 }, // Mono is best for voice calls
+        sampleRate: { ideal: 48000 },
+        sampleSize: { ideal: 16 }
+      };
+
+      // Simpler constraints for iOS (Safari doesn't support goog* constraints)
+      const simpleConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      };
+
       try {
-        // Request with optimal settings for voice calls
+        // First try with advanced constraints
         localStream = await navigator.mediaDevices.getUserMedia({
           video: false,
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            // Remove strict constraints for better mobile compatibility
-            // channelCount: 1,
-            // sampleRate: 48000, 
-            // sampleSize: 16
-          }
+          audio: isIOS ? simpleConstraints : advancedConstraints
         });
 
         const audioTracks = localStream.getAudioTracks();
@@ -2494,13 +2525,30 @@
         if (audioTracks.length > 0) {
           const settings = audioTracks[0].getSettings();
           log('Audio settings: ' + JSON.stringify(settings));
+
+          // Log platform-specific info
+          log(`Platform: ${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Desktop'}`);
         }
 
         return localStream;
 
       } catch (e) {
-        log('Microphone error: ' + e.message, 'err');
-        throw new Error('Microphone access denied. Please allow microphone access.');
+        log('Microphone error with primary constraints: ' + e.message, 'warn');
+
+        // Fallback to simple constraints
+        try {
+          log('Trying fallback audio constraints...');
+          localStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: true // Simplest possible - just get any audio
+          });
+
+          log('Fallback microphone access granted');
+          return localStream;
+        } catch (e2) {
+          log('Microphone error: ' + e2.message, 'err');
+          throw new Error('Microphone access denied. Please allow microphone access.');
+        }
       }
     }
 
@@ -2512,26 +2560,35 @@
       }
 
       const config = {
-        ...iceServers,
+        iceServers: iceServers.iceServers,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
         sdpSemantics: 'unified-plan',
-        iceCandidatePoolSize: 2 // Pre-fetch candidates to speed up connection
+        iceCandidatePoolSize: 4 // Pre-fetch candidates for faster connection
       };
 
       pc = new RTCPeerConnection(config);
       remoteStream = new MediaStream();
+
+      // NOTE: We do NOT call addTransceiver here - addTrack() creates one automatically
+      // Having duplicate transceivers can cause negotiation issues
 
       // Handle incoming tracks - CRITICAL FIX
       pc.ontrack = (event) => {
         log('🔊 Received remote track: ' + event.track.kind + ', readyState: ' + event.track.readyState);
 
         if (event.track.kind === 'audio') {
-          // Add track to remote stream
-          remoteStream.addTrack(event.track);
+          // CRITICAL: Use event.streams[0] if available (more reliable)
+          if (event.streams && event.streams[0]) {
+            remoteAudioEl.srcObject = event.streams[0];
+            log('Using event.streams[0] for audio');
+          } else {
+            // Fallback: Add track to our remoteStream
+            remoteStream.addTrack(event.track);
+            remoteAudioEl.srcObject = remoteStream;
+            log('Using manual remoteStream for audio');
+          }
 
-          // Attach stream to audio element
-          remoteAudioEl.srcObject = remoteStream;
           remoteAudioEl.volume = 1.0;
           remoteAudioEl.muted = false;
 
@@ -2572,9 +2629,24 @@
         switch (pc.iceConnectionState) {
           case 'checking':
             document.getElementById('callStatusText').textContent = 'Connecting...';
+            // Set a timeout - if we're still checking after 30 seconds, something is wrong
+            if (!window.iceCheckingTimeout) {
+              window.iceCheckingTimeout = setTimeout(() => {
+                if (pc && pc.iceConnectionState === 'checking') {
+                  log('ICE connection timeout - stuck in checking state', 'err');
+                  document.getElementById('callStatusText').textContent = 'Connection failed - retrying...';
+                  pc.restartIce();
+                }
+              }, 30000);
+            }
             break;
           case 'connected':
           case 'completed':
+            // Clear the timeout if we connected successfully
+            if (window.iceCheckingTimeout) {
+              clearTimeout(window.iceCheckingTimeout);
+              window.iceCheckingTimeout = null;
+            }
             setCallConnected();
             break;
           case 'failed':
@@ -2634,6 +2706,13 @@
     async function playRemoteAudio() {
       log('Attempting to play remote audio...');
 
+      // Detect platform for specific workarounds
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      const isAndroid = /Android/.test(navigator.userAgent);
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+      log(`Platform: ${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Desktop'}, Safari: ${isSafari}`);
+
       // Make sure audio context is running - iOS requirement
       if (audioContext && audioContext.state === 'suspended') {
         try {
@@ -2644,20 +2723,40 @@
         }
       }
 
-      // Configure audio element
+      // Configure audio element - iOS REQUIRES these attributes
       remoteAudioEl.volume = 1.0;
       remoteAudioEl.muted = false;
       remoteAudioEl.playsInline = true;
+      remoteAudioEl.setAttribute('playsinline', '');
+      remoteAudioEl.setAttribute('webkit-playsinline', ''); // Legacy iOS
 
-      // Force earpiece on iOS by setting audio session category if possible (via potential native wrappers or PWA adjustments)
-      // For standard web, we rely on the browser's default routing which is usually earpiece for calls
+      // iOS Safari specific: Need to "warm up" the audio element
+      if (isIOS || isSafari) {
+        try {
+          // Create and play a silent audio to unlock audio on iOS
+          remoteAudioEl.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onr6xk4d9eXx5enN4gY2UsZaIgXt6enh1d36KmKudhHt3fHx7d3d+ipasnIN8eXt9fHd3foqXrJ2EfHh6fH17d3mIlq+gh3x3eXx+fXd2fo2asZyEfHd5fH99d3Z+jJqynYV8d3l8f393dn6MmrKehXx3eXx/f3d2foyasp6FfHd5fH9/d3Z+jJqynoV8d3l8f393dn6MmrKehXx3eXx/f3d2foyasp6FfHd5fH9/d3Z+jJqy';
+          await remoteAudioEl.play();
+          remoteAudioEl.pause();
+          log('iOS audio warmup complete');
+        } catch (e) {
+          log('iOS audio warmup failed (normal if no user gesture): ' + e.message, 'warn');
+        }
 
-      // Attempt to set output to earpiece by default
-      await setAudioOutput(false);
+        // Reset to actual stream
+        if (remoteStream && remoteStream.getAudioTracks().length > 0) {
+          remoteAudioEl.srcObject = remoteStream;
+        }
+      }
+
+      // NOTE: We'll set audio output AFTER play() succeeds to avoid blocking
 
       try {
         await remoteAudioEl.play();
         log('✅ Remote audio playing successfully!');
+
+        // Set audio output AFTER play succeeds
+        setAudioOutput(false).catch(e => log('Audio output setting failed: ' + e.message, 'warn'));
+
         setCallConnected();
       } catch (err) {
         log('Audio autoplay blocked: ' + err.message, 'warn');
@@ -2669,7 +2768,16 @@
             if (audioContext && audioContext.state === 'suspended') {
               await audioContext.resume();
             }
-            await remoteAudioEl.play();
+
+            // For iOS, unmute first then play
+            if (isIOS) {
+              remoteAudioEl.muted = true;
+              await remoteAudioEl.play();
+              remoteAudioEl.muted = false;
+            } else {
+              await remoteAudioEl.play();
+            }
+
             log('✅ Audio enabled after user interaction');
             setCallConnected();
             document.getElementById('callScreen').removeEventListener('click', enableAudio);
@@ -2799,6 +2907,8 @@
         while (iceQueue.length > 0) {
           addIceCandidate(iceQueue.shift());
         }
+      } else {
+        log('ICE queue is empty, no candidates to process');
       }
     }
 
@@ -2834,13 +2944,31 @@
     }
 
     // ===== BACKGROUND AUDIO KEEP-ALIVE =====
+    let silentOscillator = null;
+
     function startKeepAlive() {
       if (keepAliveInterval) clearInterval(keepAliveInterval);
 
-      // Keep connection alive in background
+      // CRITICAL: Create silent audio oscillator to keep audio context alive in background
+      // This tricks the browser into thinking audio is playing, preventing suspension
+      if (audioContext && !silentOscillator) {
+        try {
+          silentOscillator = audioContext.createOscillator();
+          const silentGain = audioContext.createGain();
+          silentGain.gain.value = 0.001; // Nearly silent
+          silentOscillator.connect(silentGain);
+          silentGain.connect(audioContext.destination);
+          silentOscillator.start();
+          log('Silent audio oscillator started for background');
+        } catch (e) {
+          log('Could not create silent oscillator: ' + e.message, 'warn');
+        }
+      }
+
+      // Keep connection alive in background - check more frequently (every 2 seconds)
       keepAliveInterval = setInterval(() => {
         if (pc && isCallConnected) {
-          // Send a small data message to keep connection alive
+          // Re-enable audio track if it got disabled
           if (localStream) {
             const tracks = localStream.getAudioTracks();
             if (tracks.length > 0 && !tracks[0].enabled && !micOff) {
@@ -2849,24 +2977,32 @@
             }
           }
 
+          // Force resume audio context if suspended
+          if (audioContext && audioContext.state === 'suspended') {
+            audioContext.resume().then(() => {
+              log('AudioContext resumed in background');
+            }).catch(() => { });
+          }
+
           // Check if audio is still playing
-          if (remoteAudioEl.paused && remoteStream && remoteStream.getAudioTracks().length > 0) {
+          if (remoteAudioEl.paused && remoteAudioEl.srcObject) {
             log('Remote audio paused, attempting to resume...', 'warn');
             remoteAudioEl.play().catch(() => { });
           }
+
+          // Check WebRTC connection health
+          if (pc.iceConnectionState === 'disconnected') {
+            log('ICE disconnected in background, restarting...', 'warn');
+            pc.restartIce();
+          }
         }
-      }, 5000);
+      }, 2000); // Check every 2 seconds for faster response
 
       // Prevent device sleep during call
-      if ('wakeLock' in navigator) {
-        navigator.wakeLock.request('screen').then(lock => {
-          log('Wake lock acquired');
-          // Store reference to release later
-          window.wakeLock = lock;
-        }).catch(e => {
-          log('Wake lock failed: ' + e.message, 'warn');
-        });
-      }
+      requestWakeLock();
+
+      // Show persistent notification on Android to keep app alive
+      showCallNotification();
     }
 
     function stopKeepAlive() {
@@ -2875,7 +3011,42 @@
         keepAliveInterval = null;
       }
 
+      // Stop silent oscillator
+      if (silentOscillator) {
+        try {
+          silentOscillator.stop();
+          silentOscillator.disconnect();
+        } catch (e) { }
+        silentOscillator = null;
+      }
+
       // Release wake lock
+      releaseWakeLock();
+
+      // Clear call notification
+      clearCallNotification();
+    }
+
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try {
+          window.wakeLock = await navigator.wakeLock.request('screen');
+          log('Wake lock acquired');
+
+          // Re-acquire wake lock if released (e.g., when screen turns off)
+          window.wakeLock.addEventListener('release', () => {
+            log('Wake lock released, re-acquiring...');
+            if (isCallConnected) {
+              requestWakeLock();
+            }
+          });
+        } catch (e) {
+          log('Wake lock failed: ' + e.message, 'warn');
+        }
+      }
+    }
+
+    function releaseWakeLock() {
       if (window.wakeLock) {
         window.wakeLock.release().then(() => {
           log('Wake lock released');
@@ -2884,11 +3055,38 @@
       }
     }
 
+    function showCallNotification() {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+      // Use Service Worker to show persistent notification
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'SHOW_NOTIFICATION',
+          payload: {
+            title: '📞 Call in Progress',
+            body: 'Audio call with ' + callTargetName,
+            tag: 'ongoing-call',
+            data: { type: 'call' }
+          }
+        });
+      }
+    }
+
+    function clearCallNotification() {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.registration) {
+        navigator.serviceWorker.registration.then(reg => {
+          reg.getNotifications({ tag: 'ongoing-call' }).then(notifications => {
+            notifications.forEach(n => n.close());
+          });
+        });
+      }
+    }
+
     // ===== STATS MONITORING =====
     function startStatsMonitoring() {
       if (statsInterval) clearInterval(statsInterval);
 
-      StatsInterval = setInterval(async () => {
+      statsInterval = setInterval(async () => {
         if (!pc || pc.connectionState !== 'connected') return;
 
         try {
@@ -2999,7 +3197,8 @@
 
       callTarget = incomingData.callerId;
       callTargetName = incomingData.callerName;
-      iceQueue = [];
+      // NOTE: Do NOT reset iceQueue here! We need to keep the candidates that were queued while waiting
+      // iceQueue = []; // REMOVED - this was clearing candidates received before accept
       remoteDescriptionSet = false;
       isCallConnected = false;
 
@@ -3012,6 +3211,7 @@
       document.getElementById('callAvatar').className = 'call-avatar ringing';
 
       try {
+        log('ICE candidates in queue before setup: ' + iceQueue.length);
         await getAudio();
         await createPC();
 
@@ -3080,6 +3280,12 @@
       stopCallTimer();
       stopStatsMonitoring();
       stopKeepAlive();
+
+      // Clear ICE checking timeout
+      if (window.iceCheckingTimeout) {
+        clearTimeout(window.iceCheckingTimeout);
+        window.iceCheckingTimeout = null;
+      }
 
       if (localStream) {
         localStream.getTracks().forEach(track => {
@@ -3224,7 +3430,10 @@
       log('Applying low-bandwidth optimizations to SDP...');
       const sdpLines = sdp.split('\r\n');
       const mLineIndex = sdpLines.findIndex(l => l.startsWith('m=audio'));
-      if (mLineIndex === -1) return sdp;
+      if (mLineIndex === -1) {
+        log('No audio m-line found in SDP, skipping optimization', 'warn');
+        return sdp;
+      }
 
       // Find opus payload type
       let opusPayload = null;
@@ -3236,6 +3445,7 @@
       }
 
       if (opusPayload) {
+        log('Found Opus codec with payload type: ' + opusPayload);
         // Check if fmtp line exists
         const fmtpLineIndex = sdpLines.findIndex(l => l.startsWith(`a=fmtp:${opusPayload}`));
         if (fmtpLineIndex !== -1) {
@@ -3243,28 +3453,34 @@
           let fmtp = sdpLines[fmtpLineIndex];
           if (!fmtp.includes('useinbandfec=1')) fmtp += ';useinbandfec=1'; // Forward Error Correction
           if (!fmtp.includes('usedtx=1')) fmtp += ';usedtx=1';             // Discontinuous Transmission
-          if (!fmtp.includes('maxaveragebitrate=')) {
-            // Limit bitrate to 20kbps for voice (standard is often 32+)
-            fmtp += ';maxaveragebitrate=20000';
-          }
+          if (!fmtp.includes('stereo=0')) fmtp += ';stereo=0';             // Ensure Mono
+          if (!fmtp.includes('maxaveragebitrate=32000')) fmtp += ';maxaveragebitrate=32000'; // 32kbps for HD Voice
+
           sdpLines[fmtpLineIndex] = fmtp;
+          log('✅ SDP optimized: FEC=on, DTX=on, Mono=on, Bitrate=32kbps');
         } else {
-          // Add new fmtp line after rtpmap
-          const rtpmapIndex = sdpLines.findIndex(l => l.startsWith(`a=rtpmap:${opusPayload}`));
-          if (rtpmapIndex !== -1) {
-            sdpLines.splice(rtpmapIndex + 1, 0, `a=fmtp:${opusPayload} useinbandfec=1;usedtx=1;maxaveragebitrate=20000`);
-          }
+          // Add new fmtp line
+          sdpLines.splice(mLineIndex + 1, 0, `a=fmtp:${opusPayload} useinbandfec=1;usedtx=1;stereo=0;maxaveragebitrate=32000`);
+          log('✅ SDP optimized: Added new fmtp line with optimizations');
         }
+      } else {
+        log('Opus codec not found in SDP, skipping optimization', 'warn');
       }
       return sdpLines.join('\r\n');
     }
+
 
     // ===== VISIBILITY CHANGE - CRITICAL FOR BACKGROUND =====
     document.addEventListener('visibilitychange', () => {
       log('Visibility changed: ' + (document.hidden ? 'hidden' : 'visible'));
 
-      if (!document.hidden) {
-        // Page became visible
+      if (document.hidden) {
+        // Page going to background - ensure audio keeps playing
+        if (isCallConnected) {
+          log('Call active, keeping audio alive in background');
+        }
+      } else {
+        // Page became visible - restore everything
         if (remoteAudioEl.srcObject && remoteAudioEl.paused) {
           log('Resuming audio after visibility change...');
           remoteAudioEl.play().catch(e => {
@@ -3275,18 +3491,42 @@
         if (audioContext && audioContext.state === 'suspended') {
           audioContext.resume().catch(() => { });
         }
+
+        // Re-acquire wake lock if in call
+        if (isCallConnected) {
+          requestWakeLock();
+
+          // Check if WebRTC connection is still healthy
+          if (pc && (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed')) {
+            log('WebRTC connection unhealthy after visibility change, restarting ICE', 'warn');
+            pc.restartIce();
+          }
+        }
       }
     });
 
-    // Handle page freeze/resume (mobile specific)
+    // Handle page freeze/resume (mobile specific - Chrome on Android)
     document.addEventListener('freeze', () => {
       log('Page frozen', 'warn');
+      // The page is being frozen - audio should continue due to silent oscillator
     });
 
     document.addEventListener('resume', () => {
-      log('Page resumed');
+      log('Page resumed from freeze');
+
+      // Restore audio immediately
       if (remoteAudioEl.srcObject) {
         remoteAudioEl.play().catch(() => { });
+      }
+
+      // Resume audio context
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => { });
+      }
+
+      // Re-acquire wake lock
+      if (isCallConnected) {
+        requestWakeLock();
       }
     });
 

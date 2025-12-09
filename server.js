@@ -690,15 +690,16 @@ app.get('/api/ice-servers', (req, res) => {
   // In production, you might want to generate time-limited credentials
   res.json({
     iceServers: [
+      // Google STUN servers (reliable)
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
+      // Other free STUN servers
       { urls: 'stun:global.stun.twilio.com:3478' },
       { urls: 'stun:stun.framasoft.org:3478' },
-      { urls: 'stun:stun.voip.blackberry.com:3478' },
-      // Free TURN servers (for testing - use your own in production)
+      // Free TURN servers (for NAT traversal)
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -713,6 +714,17 @@ app.get('/api/ice-servers', (req, res) => {
         urls: 'turn:openrelay.metered.ca:443?transport=tcp',
         username: 'openrelayproject',
         credential: 'openrelayproject'
+      },
+      // Additional free TURN servers for redundancy
+      {
+        urls: 'turn:relay.metered.ca:80',
+        username: 'e8dd65f92c95c6bf4bf1',
+        credential: 'DQpDQkhS3f/L4bsi'
+      },
+      {
+        urls: 'turn:relay.metered.ca:443',
+        username: 'e8dd65f92c95c6bf4bf1',
+        credential: 'DQpDQkhS3f/L4bsi'
       }
     ]
   });

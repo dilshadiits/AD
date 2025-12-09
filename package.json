@@ -1,7 +1,7 @@
 {
   "name": "private-chat",
-  "version": "2.1.0",
-  "description": "Private chat application with audio calls",
+  "version": "2.2.0",
+  "description": "Private chat application with secure E2E encrypted messaging and cross-platform audio calls (PC, iOS, Android)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -20,7 +20,11 @@
     "chat",
     "webrtc",
     "audio-call",
-    "socket.io"
+    "socket.io",
+    "e2e-encryption",
+    "pwa",
+    "real-time",
+    "cross-platform"
   ],
   "license": "MIT"
 }
