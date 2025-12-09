@@ -2568,6 +2568,70 @@
       }
     }
 
+    // ===== HD AUDIO SDP OPTIMIZATION =====
+    // Optimizes Opus codec for maximum voice clarity
+    function sdpMunge(sdp) {
+      if (!sdp) return sdp;
+
+      // Find Opus codec payload type (usually 111)
+      const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+      if (!opusMatch) {
+        log('⚠️ Opus codec not found in SDP', 'warn');
+        return sdp;
+      }
+
+      const opusPayloadType = opusMatch[1];
+      log('Found Opus codec with payload type: ' + opusPayloadType);
+
+      // HD Voice settings for maximum clarity
+      const hdSettings = [
+        'maxaveragebitrate=48000',    // 48kbps for HD voice (was 32kbps)
+        'maxplaybackrate=48000',       // Full 48kHz playback
+        'useinbandfec=1',              // Enable Forward Error Correction
+        'usedtx=0',                    // DISABLE DTX for clearer audio (no choppy silences)
+        'stereo=0',                    // Mono for voice (more efficient)
+        'sprop-stereo=0',              // Confirm mono
+        'cbr=1',                       // Constant bitrate for consistent quality
+        'ptime=20',                    // 20ms frames for low latency
+        'minptime=10',                 // Allow smaller frames
+        'maxptime=40'                  // Cap at 40ms for quality
+      ].join(';');
+
+      // Find existing fmtp line for Opus
+      const fmtpRegex = new RegExp('a=fmtp:' + opusPayloadType + '\\s+([^\\r\\n]+)', 'i');
+      const fmtpMatch = sdp.match(fmtpRegex);
+
+      if (fmtpMatch) {
+        // Update existing fmtp line, preserving some original settings
+        let existingParams = fmtpMatch[1];
+
+        // Remove conflicting parameters
+        existingParams = existingParams.replace(/maxaveragebitrate=\d+;?/gi, '');
+        existingParams = existingParams.replace(/maxplaybackrate=\d+;?/gi, '');
+        existingParams = existingParams.replace(/useinbandfec=\d+;?/gi, '');
+        existingParams = existingParams.replace(/usedtx=\d+;?/gi, '');
+        existingParams = existingParams.replace(/stereo=\d+;?/gi, '');
+        existingParams = existingParams.replace(/cbr=\d+;?/gi, '');
+        existingParams = existingParams.replace(/ptime=\d+;?/gi, '');
+
+        // Clean up any trailing/leading semicolons
+        existingParams = existingParams.replace(/^;+|;+$/g, '').replace(/;+/g, ';');
+
+        // Combine with HD settings
+        const newParams = existingParams ? existingParams + ';' + hdSettings : hdSettings;
+        sdp = sdp.replace(fmtpRegex, 'a=fmtp:' + opusPayloadType + ' ' + newParams);
+        log('✅ SDP optimized for HD voice: 48kbps, FEC=on, DTX=off, CBR=on');
+      } else {
+        // Add new fmtp line after rtpmap
+        const rtpmapLine = 'a=rtpmap:' + opusPayloadType + ' opus/48000/2';
+        const newFmtpLine = 'a=fmtp:' + opusPayloadType + ' ' + hdSettings;
+        sdp = sdp.replace(rtpmapLine, rtpmapLine + '\r\n' + newFmtpLine);
+        log('✅ Added HD voice fmtp line: 48kbps, FEC=on, DTX=off, CBR=on');
+      }
+
+      return sdp;
+    }
+
     async function getAudio() {
       log('Requesting microphone access...');
 
