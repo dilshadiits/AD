@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const compression = require('compression');
 
 const app = express();
 const server = http.createServer(app);
@@ -62,8 +63,25 @@ app.use(rateLimit({
   legacyHeaders: false
 }));
 
-app.use(express.static('public'));
-app.use(express.json());
+// Enable gzip compression for all responses
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+  level: 6 // Balance between speed and compression ratio
+}));
+
+app.use(express.static('public', {
+  maxAge: '1d', // Cache static files for 1 day
+  etag: true
+}));
+app.use(express.json({ limit: '1mb' })); // Limit JSON body size
+
+// ================== CONSTANTS ==================
+const MAX_MESSAGES_PER_ROOM = 100;
+const MAX_ROOMS = 1000;
+const MAX_USERS_PER_ROOM = 50;
 
 // ================== DATA STORES ==================
 const rooms = new Map();
@@ -659,6 +677,7 @@ app.get('/health', (req, res) => {
   const roomCount = rooms.size;
   let totalUsers = 0;
   let onlineUsers = 0;
+  let totalMessages = 0;
 
   for (const [, roomUsers] of rooms) {
     for (const [, user] of roomUsers) {
@@ -667,17 +686,41 @@ app.get('/health', (req, res) => {
     }
   }
 
+  for (const [, messages] of messageStore) {
+    totalMessages += messages.length;
+  }
+
+  const memUsage = process.memoryUsage();
+
   res.json({
     status: 'ok',
+    version: '2.2.0',
     rooms: roomCount,
+    maxRooms: MAX_ROOMS,
     totalUsers,
     onlineUsers,
+    maxUsersPerRoom: MAX_USERS_PER_ROOM,
     activeCalls: Math.floor(activeCalls.size / 2),
+    totalMessages,
+    maxMessagesPerRoom: MAX_MESSAGES_PER_ROOM,
     uptime: Math.floor(process.uptime()),
-    memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+    uptimeFormatted: formatUptime(process.uptime()),
+    memory: {
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB',
+      rss: Math.round(memUsage.rss / 1024 / 1024) + 'MB'
+    },
     timestamp: new Date().toISOString()
   });
 });
+
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${d}d ${h}h ${m}m ${s}s`;
+}
 
 // Lightweight ping for keep-alive
 app.get('/ping', (req, res) => {
@@ -761,11 +804,38 @@ const keepAlive = () => {
   }, interval);
 };
 
+// ================== GRACEFUL SHUTDOWN ==================
+const gracefulShutdown = (signal) => {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+
+    // Close all socket connections
+    io.close(() => {
+      console.log('✅ Socket.IO connections closed');
+      console.log('👋 Graceful shutdown complete');
+      process.exit(0);
+    });
+  });
+
+  // Force close after 10 seconds
+  setTimeout(() => {
+    console.error('⚠️ Forcing shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 // ================== START SERVER ==================
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
+  console.log(`💾 Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
   // Start keep-alive
   keepAlive();

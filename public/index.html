@@ -978,6 +978,67 @@
       display: block;
     }
 
+    /* Audio Level Meter */
+    .audio-meters {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      align-items: flex-end;
+      margin-bottom: 20px;
+      height: 60px;
+    }
+
+    .audio-meter {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .audio-meter-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .audio-meter-bars {
+      display: flex;
+      gap: 2px;
+      align-items: flex-end;
+      height: 40px;
+    }
+
+    .audio-meter-bar {
+      width: 4px;
+      background: var(--success);
+      border-radius: 2px;
+      transition: height 0.05s ease-out;
+      min-height: 2px;
+    }
+
+    .audio-meter-bar.low {
+      background: var(--success);
+    }
+
+    .audio-meter-bar.mid {
+      background: var(--warning);
+    }
+
+    .audio-meter-bar.high {
+      background: var(--danger);
+    }
+
+    .audio-meter.muted .audio-meter-bar {
+      background: var(--text-muted) !important;
+    }
+
+    /* Network Quality Tooltip */
+    .network-info {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
     /* Debug */
     #debug {
       position: fixed;
@@ -1159,6 +1220,31 @@
         <div class="bar"></div>
         <div class="bar"></div>
         <div class="bar"></div>
+      </div>
+      <div class="network-info" id="networkInfo">Checking...</div>
+
+      <!-- Audio Level Meters -->
+      <div class="audio-meters" id="audioMeters">
+        <div class="audio-meter" id="localMeter">
+          <div class="audio-meter-bars">
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+          </div>
+          <div class="audio-meter-label">You</div>
+        </div>
+        <div class="audio-meter" id="remoteMeter">
+          <div class="audio-meter-bars">
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+            <div class="audio-meter-bar"></div>
+          </div>
+          <div class="audio-meter-label">Them</div>
+        </div>
       </div>
       <div id="callStats" style="font-size: 12px; color: yellow; margin-bottom: 10px; font-family: monospace;">Waiting
         for data...</div>
@@ -2686,10 +2772,16 @@
 
         if (pc.connectionState === 'connected') {
           setCallConnected();
-          startStatsMonitoring();
         } else if (pc.connectionState === 'failed') {
-          addSystemMessage('Call connection failed');
-          cleanupCall();
+          // Try auto-reconnection first
+          attemptCallReconnection();
+        } else if (pc.connectionState === 'disconnected') {
+          // Trigger auto-reconnect on disconnect
+          setTimeout(() => {
+            if (pc && pc.connectionState === 'disconnected') {
+              attemptCallReconnection();
+            }
+          }, 2000);
         }
       };
 
@@ -2792,13 +2884,30 @@
       }
     }
 
-    // ===== AUDIO OUTPUT CONTROL (EARPIECE/SPEAKER) =====
+    // ===== AUDIO OUTPUT CONTROL (EARPIECE/SPEAKER/HEADPHONES) =====
+    let currentAudioDevice = 'default';
+    let headphonesConnected = false;
+
     async function getAudioOutputDevices() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         audioOutputDevices = devices.filter(d => d.kind === 'audiooutput');
         log('Audio outputs found: ' + audioOutputDevices.length);
         audioOutputDevices.forEach(d => log('  - ' + d.label + ' (' + d.deviceId + ')'));
+
+        // Detect headphones
+        headphonesConnected = audioOutputDevices.some(d =>
+          d.label.toLowerCase().includes('headphone') ||
+          d.label.toLowerCase().includes('headset') ||
+          d.label.toLowerCase().includes('airpod') ||
+          d.label.toLowerCase().includes('earbud') ||
+          d.label.toLowerCase().includes('bluetooth')
+        );
+
+        if (headphonesConnected) {
+          log('🎧 Headphones detected!');
+        }
+
         return audioOutputDevices;
       } catch (e) {
         log('Cannot enumerate devices: ' + e.message, 'warn');
@@ -2806,21 +2915,108 @@
       }
     }
 
+    // Listen for device changes (headphone connect/disconnect)
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        log('Audio device change detected');
+        const devices = await getAudioOutputDevices();
+
+        // If in a call, automatically switch to headphones if connected
+        if (isCallConnected && remoteAudioEl.srcObject) {
+          await autoSelectAudioOutput();
+        }
+      });
+    }
+
+    async function autoSelectAudioOutput() {
+      const devices = await getAudioOutputDevices();
+
+      // Priority: Headphones > Earpiece > Speaker
+      let targetDevice = null;
+
+      // First, check for headphones/bluetooth
+      targetDevice = devices.find(d =>
+        d.label.toLowerCase().includes('headphone') ||
+        d.label.toLowerCase().includes('headset') ||
+        d.label.toLowerCase().includes('airpod') ||
+        d.label.toLowerCase().includes('earbud') ||
+        d.label.toLowerCase().includes('bluetooth')
+      );
+
+      if (targetDevice) {
+        await setAudioOutputDevice(targetDevice);
+        updateSpeakerButtonUI('headphones');
+        log('🎧 Auto-switched to headphones: ' + targetDevice.label);
+        return;
+      }
+
+      // If no headphones, use earpiece for calls (not speaker)
+      if (!speakerMode) {
+        targetDevice = devices.find(d =>
+          d.label.toLowerCase().includes('earpiece') ||
+          d.label.toLowerCase().includes('handset') ||
+          d.label.toLowerCase().includes('receiver')
+        );
+
+        if (targetDevice) {
+          await setAudioOutputDevice(targetDevice);
+          updateSpeakerButtonUI('earpiece');
+          return;
+        }
+      }
+
+      // Fallback to default
+      updateSpeakerButtonUI(speakerMode ? 'speaker' : 'earpiece');
+    }
+
+    async function setAudioOutputDevice(device) {
+      if (typeof remoteAudioEl.setSinkId === 'function') {
+        try {
+          await remoteAudioEl.setSinkId(device.deviceId);
+          currentAudioDevice = device.deviceId;
+          log('Audio output set to: ' + device.label);
+          return true;
+        } catch (e) {
+          log('setSinkId error: ' + e.message, 'warn');
+        }
+      }
+      return false;
+    }
+
+    function updateSpeakerButtonUI(mode) {
+      const speakerBtn = document.getElementById('speakerBtn');
+      speakerBtn.classList.remove('active');
+
+      switch (mode) {
+        case 'headphones':
+          speakerBtn.textContent = '🎧';
+          speakerBtn.style.background = '#3b82f6'; // Blue for headphones
+          break;
+        case 'speaker':
+          speakerBtn.classList.add('active');
+          speakerBtn.textContent = '🔊';
+          speakerBtn.style.background = '#22c55e'; // Green for speaker
+          break;
+        case 'earpiece':
+        default:
+          speakerBtn.textContent = '📱';
+          speakerBtn.style.background = '#8b5cf6'; // Purple for earpiece
+          break;
+      }
+    }
+
     async function setAudioOutput(useSpeaker) {
       speakerMode = useSpeaker;
-      log('Setting audio output: ' + (useSpeaker ? 'SPEAKER' : 'EARPIECE'));
+      log('Setting audio output: ' + (useSpeaker ? 'SPEAKER' : 'EARPIECE/HEADPHONES'));
 
-      // Update UI
-      const speakerBtn = document.getElementById('speakerBtn');
-      if (useSpeaker) {
-        speakerBtn.classList.add('active');
-        speakerBtn.textContent = '🔊';
-        speakerBtn.style.background = '#22c55e'; // Green for speaker mode
-      } else {
-        speakerBtn.classList.remove('active');
-        speakerBtn.textContent = '📱'; // Phone icon for earpiece
-        speakerBtn.style.background = '#8b5cf6'; // Purple for earpiece mode
+      // If headphones are connected, they take priority
+      if (headphonesConnected && !useSpeaker) {
+        await autoSelectAudioOutput();
+        return true;
       }
+
+      // Update UI based on mode
+      updateSpeakerButtonUI(useSpeaker ? 'speaker' : 'earpiece');
 
       // Method 1: Use setSinkId API (Chrome, Edge, some Android browsers)
       if (typeof remoteAudioEl.setSinkId === 'function') {
@@ -2838,18 +3034,37 @@
                 d.label.toLowerCase().includes('speakerphone')
               );
             } else {
-              // Look for earpiece/handset
+              // Look for headphones first, then earpiece
               targetDevice = devices.find(d =>
-                d.label.toLowerCase().includes('earpiece') ||
-                d.label.toLowerCase().includes('handset') ||
-                d.label.toLowerCase().includes('receiver')
+                d.label.toLowerCase().includes('headphone') ||
+                d.label.toLowerCase().includes('headset') ||
+                d.label.toLowerCase().includes('airpod') ||
+                d.label.toLowerCase().includes('bluetooth')
               );
+
+              if (!targetDevice) {
+                // Look for earpiece/handset
+                targetDevice = devices.find(d =>
+                  d.label.toLowerCase().includes('earpiece') ||
+                  d.label.toLowerCase().includes('handset') ||
+                  d.label.toLowerCase().includes('receiver')
+                );
+              }
             }
 
             // If specific device found, use it
             if (targetDevice) {
               await remoteAudioEl.setSinkId(targetDevice.deviceId);
+              currentAudioDevice = targetDevice.deviceId;
               log('Audio output set to: ' + targetDevice.label);
+
+              // Update UI for headphones
+              if (targetDevice.label.toLowerCase().includes('headphone') ||
+                targetDevice.label.toLowerCase().includes('headset') ||
+                targetDevice.label.toLowerCase().includes('airpod') ||
+                targetDevice.label.toLowerCase().includes('bluetooth')) {
+                updateSpeakerButtonUI('headphones');
+              }
               return true;
             }
 
@@ -2921,6 +3136,15 @@
       startCallTimer();
       log('✅ Call connected!');
       updateAudioDebug();
+
+      // Start audio level meters
+      startAudioMeters();
+
+      // Start network quality monitoring
+      startNetworkMonitoring();
+
+      // Reset reconnection attempts
+      reconnectAttempts = 0;
     }
 
     function startCallTimer() {
@@ -3025,7 +3249,312 @@
 
       // Clear call notification
       clearCallNotification();
+
+      // Stop audio meters
+      stopAudioMeters();
+
+      // Stop network monitoring
+      stopNetworkMonitoring();
     }
+
+    // ===== AUDIO LEVEL METERS =====
+    let localAnalyser = null;
+    let remoteAnalyser = null;
+    let audioMeterInterval = null;
+
+    function startAudioMeters() {
+      if (!audioContext) return;
+
+      log('Starting audio level meters...');
+
+      // Create analyser for local audio (microphone)
+      if (localStream && localStream.getAudioTracks().length > 0) {
+        try {
+          localAnalyser = audioContext.createAnalyser();
+          localAnalyser.fftSize = 256;
+          const localSource = audioContext.createMediaStreamSource(localStream);
+          localSource.connect(localAnalyser);
+        } catch (e) {
+          log('Could not create local analyser: ' + e.message, 'warn');
+        }
+      }
+
+      // Create analyser for remote audio (speaker)
+      if (remoteStream && remoteStream.getAudioTracks().length > 0) {
+        try {
+          remoteAnalyser = audioContext.createAnalyser();
+          remoteAnalyser.fftSize = 256;
+          const remoteSource = audioContext.createMediaStreamSource(remoteStream);
+          remoteSource.connect(remoteAnalyser);
+        } catch (e) {
+          log('Could not create remote analyser: ' + e.message, 'warn');
+        }
+      }
+
+      // Update meters at 30fps
+      audioMeterInterval = setInterval(updateAudioMeters, 33);
+    }
+
+    function stopAudioMeters() {
+      if (audioMeterInterval) {
+        clearInterval(audioMeterInterval);
+        audioMeterInterval = null;
+      }
+      localAnalyser = null;
+      remoteAnalyser = null;
+
+      // Reset meter display
+      const localBars = document.querySelectorAll('#localMeter .audio-meter-bar');
+      const remoteBars = document.querySelectorAll('#remoteMeter .audio-meter-bar');
+      localBars.forEach(bar => bar.style.height = '2px');
+      remoteBars.forEach(bar => bar.style.height = '2px');
+    }
+
+    function updateAudioMeters() {
+      updateMeter(localAnalyser, '#localMeter', micOff);
+      updateMeter(remoteAnalyser, '#remoteMeter', speakerOff);
+    }
+
+    function updateMeter(analyser, selector, isMuted) {
+      const meter = document.querySelector(selector);
+      const bars = meter.querySelectorAll('.audio-meter-bar');
+
+      if (isMuted) {
+        meter.classList.add('muted');
+        bars.forEach(bar => bar.style.height = '2px');
+        return;
+      }
+
+      meter.classList.remove('muted');
+
+      if (!analyser) {
+        bars.forEach(bar => bar.style.height = '2px');
+        return;
+      }
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(dataArray);
+
+      // Calculate average volume
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / dataArray.length;
+      const normalizedLevel = Math.min(average / 128, 1); // 0-1 range
+
+      // Update bars with varying heights
+      bars.forEach((bar, index) => {
+        const threshold = (index + 1) / bars.length;
+        const height = normalizedLevel >= threshold * 0.8 ?
+          (8 + (index * 6) + (normalizedLevel * 10)) : 2;
+        bar.style.height = Math.min(height, 40) + 'px';
+
+        // Color coding
+        bar.className = 'audio-meter-bar';
+        if (index >= 4) bar.classList.add('high');
+        else if (index >= 2) bar.classList.add('mid');
+        else bar.classList.add('low');
+      });
+    }
+
+    // ===== NETWORK QUALITY MONITORING =====
+    let networkMonitorInterval = null;
+    let lastBytesReceived = 0;
+    let lastBytesSent = 0;
+    let lastPacketsLost = 0;
+    let lastPacketsReceived = 0;
+    let currentBitrate = 32000; // Start at 32kbps
+
+    function startNetworkMonitoring() {
+      if (!pc) return;
+      log('Starting network quality monitoring...');
+
+      networkMonitorInterval = setInterval(async () => {
+        if (!pc || pc.connectionState === 'closed') return;
+
+        try {
+          const stats = await pc.getStats();
+          let packetsLost = 0;
+          let packetsReceived = 0;
+          let bytesReceived = 0;
+          let bytesSent = 0;
+          let jitter = 0;
+          let roundTripTime = 0;
+          let audioLevel = 0;
+
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              packetsLost = report.packetsLost || 0;
+              packetsReceived = report.packetsReceived || 0;
+              bytesReceived = report.bytesReceived || 0;
+              jitter = report.jitter || 0;
+              audioLevel = report.audioLevel || 0;
+            }
+            if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+              bytesSent = report.bytesSent || 0;
+            }
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              roundTripTime = report.currentRoundTripTime || 0;
+            }
+          });
+
+          // Calculate packet loss percentage
+          const totalPackets = packetsReceived + packetsLost;
+          const lossPercent = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+
+          // Calculate bitrate (bytes/second)
+          const receiveBitrate = (bytesReceived - lastBytesReceived) * 8;
+          const sendBitrate = (bytesSent - lastBytesSent) * 8;
+
+          lastBytesReceived = bytesReceived;
+          lastBytesSent = bytesSent;
+
+          // Determine network quality
+          let quality = 'good';
+          let qualityText = 'Excellent';
+
+          if (lossPercent > 10 || jitter > 0.1 || roundTripTime > 0.3) {
+            quality = 'poor';
+            qualityText = 'Poor • ' + Math.round(lossPercent) + '% loss';
+          } else if (lossPercent > 3 || jitter > 0.05 || roundTripTime > 0.15) {
+            quality = 'fair';
+            qualityText = 'Fair • ' + Math.round(roundTripTime * 1000) + 'ms';
+          } else {
+            qualityText = 'Good • ' + Math.round(roundTripTime * 1000) + 'ms';
+          }
+
+          // Update UI
+          updateNetworkQuality(quality);
+          document.getElementById('networkInfo').textContent = qualityText;
+          document.getElementById('callStats').textContent =
+            `↓ ${formatBitrate(receiveBitrate)} ↑ ${formatBitrate(sendBitrate)} | RTT: ${Math.round(roundTripTime * 1000)}ms`;
+
+          // Adaptive bitrate
+          adjustBitrate(quality, lossPercent);
+
+        } catch (e) {
+          log('Stats error: ' + e.message, 'warn');
+        }
+      }, 1000); // Update every second
+    }
+
+    function stopNetworkMonitoring() {
+      if (networkMonitorInterval) {
+        clearInterval(networkMonitorInterval);
+        networkMonitorInterval = null;
+      }
+      lastBytesReceived = 0;
+      lastBytesSent = 0;
+    }
+
+    function formatBitrate(bps) {
+      if (bps > 1000000) return (bps / 1000000).toFixed(1) + ' Mbps';
+      if (bps > 1000) return (bps / 1000).toFixed(0) + ' kbps';
+      return bps + ' bps';
+    }
+
+    function updateNetworkQuality(quality) {
+      const el = document.getElementById('networkQuality');
+      el.className = 'network-quality ' + quality;
+    }
+
+    // ===== ADAPTIVE BITRATE =====
+    async function adjustBitrate(quality, lossPercent) {
+      if (!pc) return;
+
+      let targetBitrate = currentBitrate;
+
+      if (quality === 'poor' && currentBitrate > 16000) {
+        targetBitrate = 16000; // Drop to 16kbps
+        log('Reducing bitrate to 16kbps due to poor network', 'warn');
+      } else if (quality === 'fair' && currentBitrate !== 24000) {
+        targetBitrate = 24000; // Medium quality
+      } else if (quality === 'good' && currentBitrate < 32000) {
+        targetBitrate = 32000; // Full quality
+      }
+
+      if (targetBitrate !== currentBitrate) {
+        currentBitrate = targetBitrate;
+
+        // Apply new bitrate via sender parameters
+        const senders = pc.getSenders();
+        for (const sender of senders) {
+          if (sender.track && sender.track.kind === 'audio') {
+            const params = sender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+            params.encodings[0].maxBitrate = targetBitrate;
+            try {
+              await sender.setParameters(params);
+              log('Bitrate adjusted to: ' + formatBitrate(targetBitrate));
+            } catch (e) {
+              log('Could not adjust bitrate: ' + e.message, 'warn');
+            }
+          }
+        }
+      }
+    }
+
+    // ===== AUTOMATIC CALL RECONNECTION =====
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    async function attemptCallReconnection() {
+      if (!callTarget || !isCallConnected) return;
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        log('Max reconnection attempts reached', 'err');
+        document.getElementById('callStatusText').textContent = 'Connection lost';
+        return;
+      }
+
+      reconnectAttempts++;
+      log('Attempting call reconnection (' + reconnectAttempts + '/' + maxReconnectAttempts + ')...');
+      document.getElementById('callStatusText').textContent = 'Reconnecting... (' + reconnectAttempts + ')';
+
+      try {
+        // First try ICE restart
+        if (pc && pc.connectionState !== 'closed') {
+          pc.restartIce();
+
+          // Wait for connection to recover
+          await new Promise((resolve) => {
+            const checkConnection = setInterval(() => {
+              if (pc && (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed')) {
+                clearInterval(checkConnection);
+                resolve();
+              }
+            }, 500);
+
+            // Timeout after 5 seconds
+            setTimeout(() => {
+              clearInterval(checkConnection);
+              resolve();
+            }, 5000);
+          });
+
+          if (pc && (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed')) {
+            log('Reconnection successful!');
+            document.getElementById('callStatusText').textContent = 'Connected';
+            reconnectAttempts = 0;
+            return;
+          }
+        }
+
+        log('ICE restart failed, connection may need manual intervention', 'warn');
+        document.getElementById('reconnectBtn').style.display = 'block';
+
+      } catch (e) {
+        log('Reconnection error: ' + e.message, 'err');
+      }
+    }
+
+    // Manual reconnect button handler
+    document.getElementById('reconnectBtn').addEventListener('click', async () => {
+      log('Manual reconnect requested');
+      reconnectAttempts = 0;
+      document.getElementById('reconnectBtn').style.display = 'none';
+      await attemptCallReconnection();
+    });
 
     async function requestWakeLock() {
       if ('wakeLock' in navigator) {
