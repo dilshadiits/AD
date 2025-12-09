@@ -245,7 +245,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const safeText = sanitize(text).slice(0, 1000);
+      const safeText = sanitize(text).slice(0, 5000);
       if (!safeText) {
         if (callback) callback({ status: 'error', message: 'Empty message' });
         return;

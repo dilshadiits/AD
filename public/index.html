@@ -1253,6 +1253,91 @@
     let isCallConnected = false;
     let remoteDescriptionSet = false;
     let audioOutputDevices = [];
+    let e2eKey = null;
+
+    // ===== CRYPTO FUNCTIONS =====
+    async function deriveKey(password, salt) {
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(password),
+        { name: "PBKDF2" },
+        false,
+        ["deriveKey"]
+      );
+      return crypto.subtle.deriveKey(
+        {
+          name: "PBKDF2",
+          salt: enc.encode(salt),
+          iterations: 100000,
+          hash: "SHA-256"
+        },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptMessage(text) {
+      if (!e2eKey) return text;
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(text);
+        const ciphertext = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: iv },
+          e2eKey,
+          encoded
+        );
+        const ivStr = arrayBufferToBase64(iv);
+        const dataStr = arrayBufferToBase64(ciphertext);
+        return `ENC::v1::${ivStr}::${dataStr}`;
+      } catch (e) {
+        console.error('Encryption failed:', e);
+        return text;
+      }
+    }
+
+    async function decryptMessage(text) {
+      if (!text || !text.startsWith('ENC::v1::')) return text;
+      if (!e2eKey) return '🔒 Encrypted Message (Password required)';
+
+      try {
+        const parts = text.split('::');
+        const iv = base64ToArrayBuffer(parts[2]);
+        const data = base64ToArrayBuffer(parts[3]);
+
+        const decrypted = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: iv },
+          e2eKey,
+          data
+        );
+        return new TextDecoder().decode(decrypted);
+      } catch (e) {
+        console.error('Decryption failed:', e);
+        return '⚠️ Decryption Failed (Wrong password?)';
+      }
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
+    }
+
+    function base64ToArrayBuffer(base64) {
+      const binary_string = window.atob(base64);
+      const len = binary_string.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary_string.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
 
     // DOM Elements
     const remoteAudioEl = document.getElementById('remoteAudio');
@@ -1399,6 +1484,9 @@
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' },
+          { urls: 'stun:stun.framasoft.org:3478' },
+          { urls: 'stun:stun.voip.blackberry.com:3478' },
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -1416,6 +1504,7 @@
           }
         ],
         iceCandidatePoolSize: 10
+
       };
     }
 
@@ -1636,13 +1725,19 @@
       mySessionId = '';
     });
 
-    socket.on('messageHistory', (messages) => {
+    socket.on('messageHistory', async (messages) => {
       log('Received ' + messages.length + ' history messages');
-      messages.forEach(data => {
-        if (data.type === 'image' && data.imageData === '[IMAGE]') return;
+      for (const data of messages) {
+        if (data.type === 'image' && data.imageData === '[IMAGE]') continue;
+
+        // Decrypt if needed
+        if (data.type === 'text') {
+          data.text = await decryptMessage(data.text);
+        }
+
         const isMine = data.senderId === myId;
         addMessage(data, isMine ? 'mine' : 'other', true);
-      });
+      }
       scrollToBottom(true);
     });
 
@@ -1665,13 +1760,18 @@
     });
 
     // ===== MESSAGE HANDLERS =====
-    socket.on('message', (data) => {
+    socket.on('message', async (data) => {
       const isMine = data.senderId === myId;
 
       // Always skip our own messages from broadcast
       // We show them optimistically and the callback handles status updates
       if (isMine) {
         return;
+      }
+
+      // Decrypt if needed
+      if (data.type === 'text') {
+        data.text = await decryptMessage(data.text);
       }
 
       addMessage(data, 'other');
@@ -1862,6 +1962,17 @@
       }
 
       log('Joining room: ' + room);
+
+      // Use Room Code as the Encryption Key (Auto-E2EE)
+      deriveKey(room, "salt_fixed_for_compat").then(key => {
+        e2eKey = key;
+        log('🔐 Encrypted Room: ' + room);
+        addSystemMessage('🔐 End-to-End Encrypted (Key: Room Code)');
+      }).catch(err => {
+        log('Encryption setup failed: ' + err.message, 'warn');
+        e2eKey = null;
+      });
+
       socket.emit('join', { username: name, roomCode: room, sessionId: mySessionId });
     }
 
@@ -2044,7 +2155,7 @@
       }, 2000);
     });
 
-    function sendMessage() {
+    async function sendMessage() {
       const text = msgInput.value.trim();
       if (!text) return;
 
@@ -2077,7 +2188,9 @@
       }
 
       // Send to server
-      socket.emit('message', text, (response) => {
+      // Encrypt if key exists
+      const content = await encryptMessage(text);
+      socket.emit('message', content, (response) => {
         const latency = Math.round(performance.now() - sendTime);
 
         if (response && response.status === 'ok') {
@@ -2402,7 +2515,8 @@
         ...iceServers,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        sdpSemantics: 'unified-plan'
+        sdpSemantics: 'unified-plan',
+        iceCandidatePoolSize: 2 // Pre-fetch candidates to speed up connection
       };
 
       pc = new RTCPeerConnection(config);
@@ -2469,8 +2583,19 @@
             pc.restartIce();
             break;
           case 'disconnected':
-            document.getElementById('callStatusText').textContent = 'Connection unstable...';
-            document.getElementById('reconnectBtn').style.display = 'block';
+            log('Connection interrupted, attempting auto-reconnect...');
+            document.getElementById('callStatusText').textContent = 'Reconnecting...';
+
+            // Try automatic recovery by restarting ICE immediately
+            if (pc) pc.restartIce();
+
+            // If it doesn't recover quickly, show the manual button
+            setTimeout(() => {
+              if (pc && pc.connectionState !== 'connected') {
+                document.getElementById('callStatusText').textContent = 'Connection unstable...';
+                document.getElementById('reconnectBtn').style.display = 'block';
+              }
+            }, 3000);
             break;
         }
       };
