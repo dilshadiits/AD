@@ -138,17 +138,9 @@ loadMessages();
 // Auto-save messages every 30 seconds
 setInterval(saveMessages, 30000);
 
-// Save on process exit
-process.on('SIGINT', () => {
-  console.log('\\n🛑 Server shutting down...');
-  saveMessages();
-  process.exit(0);
-});
+// NOTE: Signal handlers (SIGINT/SIGTERM) are defined at the bottom of the file
+// in the graceful shutdown section
 
-process.on('SIGTERM', () => {
-  saveMessages();
-  process.exit(0);
-});
 
 // ================== HELPERS ==================
 function getUsers(room) {
@@ -181,7 +173,7 @@ function formatTime(isoString) {
   return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// Clean up stale rooms periodically
+// Clean up stale rooms periodically (but preserve messages!)
 setInterval(() => {
   const now = Date.now();
   for (const [roomCode, roomUsers] of rooms.entries()) {
@@ -191,11 +183,12 @@ setInterval(() => {
         roomUsers.delete(socketId);
       }
     }
-    // Remove empty rooms
+    // Remove empty room user lists (but keep messages for when users rejoin!)
     if (roomUsers.size === 0) {
       rooms.delete(roomCode);
-      messageStore.delete(roomCode);
-      console.log(`🗑️ Room ${roomCode} cleaned up (stale)`);
+      // DO NOT delete messages - they are persisted and will be loaded when someone rejoins
+      console.log(`🗑️ Room ${roomCode} user list cleaned up (messages preserved)`);
+      saveMessages(); // Save before cleanup
     }
   }
 }, 60000); // Run every minute
@@ -245,7 +238,31 @@ io.on('connection', (socket) => {
       // Initialize room if needed
       if (!rooms.has(room)) {
         rooms.set(room, new Map());
-        messageStore.set(room, []);
+        // Check if messages exist from a previous session (persisted in file)
+        // If not already in memory, try to load from file
+        if (!messageStore.has(room)) {
+          // Try to load messages from file for this room
+          try {
+            if (fs.existsSync(MESSAGES_FILE)) {
+              const data = JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'));
+              if (data[room] && Array.isArray(data[room])) {
+                const restoredMessages = data[room].map(msg => ({
+                  ...msg,
+                  seenBy: new Set(msg.seenBy || [])
+                }));
+                messageStore.set(room, restoredMessages);
+                console.log(`📂 Loaded ${restoredMessages.length} messages for room: ${room}`);
+              } else {
+                messageStore.set(room, []);
+              }
+            } else {
+              messageStore.set(room, []);
+            }
+          } catch (err) {
+            console.error('Failed to load messages for room:', room, err.message);
+            messageStore.set(room, []);
+          }
+        }
       }
 
       const roomUsers = rooms.get(room);
@@ -708,7 +725,7 @@ io.on('connection', (socket) => {
           io.to(socket.roomCode).emit('userList', getUsers(socket.roomCode));
         }
 
-        // Clean up empty rooms after a delay
+        // Clean up empty rooms after a delay (but keep messages!)
         setTimeout(() => {
           if (rooms.has(socket.roomCode)) {
             const currentUsers = rooms.get(socket.roomCode);
@@ -721,8 +738,11 @@ io.on('connection', (socket) => {
             }
             if (!hasOnlineUsers) {
               rooms.delete(socket.roomCode);
-              messageStore.delete(socket.roomCode);
-              console.log(`🗑️ Room ${socket.roomCode} deleted (all users offline)`);
+              // DO NOT DELETE MESSAGES - keep them for when users rejoin!
+              // Messages are persisted to file and will be available when someone rejoins
+              console.log(`🗑️ Room ${socket.roomCode} user list cleaned up (messages preserved)`);
+              // Save messages immediately before we might lose the room reference
+              saveMessages();
             }
           }
         }, 5 * 60 * 1000); // 5 minute delay
@@ -870,6 +890,10 @@ const keepAlive = () => {
 const gracefulShutdown = (signal) => {
   console.log(`\n${signal} received. Starting graceful shutdown...`);
 
+  // Save messages before shutdown
+  console.log('💾 Saving messages before shutdown...');
+  saveMessages();
+
   // Stop accepting new connections
   server.close(() => {
     console.log('✅ HTTP server closed');
@@ -885,6 +909,7 @@ const gracefulShutdown = (signal) => {
   // Force close after 10 seconds
   setTimeout(() => {
     console.error('⚠️ Forcing shutdown after timeout');
+    saveMessages(); // Try to save one more time before force exit
     process.exit(1);
   }, 10000);
 };
