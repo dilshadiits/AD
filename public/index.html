@@ -1339,95 +1339,6 @@
     let isCallConnected = false;
     let remoteDescriptionSet = false;
     let audioOutputDevices = [];
-    let e2eKey = null;
-
-    // ===== CRYPTO FUNCTIONS =====
-    async function deriveKey(password, salt) {
-      // Normalize password: lowercase and remove all spaces
-      // This ensures "MyRoom", "myroom", "my room", "MY ROOM" all generate the same key
-      const normalizedPassword = password.toLowerCase().replace(/\s+/g, '');
-
-      const enc = new TextEncoder();
-      const keyMaterial = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(normalizedPassword),
-        { name: "PBKDF2" },
-        false,
-        ["deriveKey"]
-      );
-      return crypto.subtle.deriveKey(
-        {
-          name: "PBKDF2",
-          salt: enc.encode(salt),
-          iterations: 100000,
-          hash: "SHA-256"
-        },
-        keyMaterial,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"]
-      );
-    }
-
-    async function encryptMessage(text) {
-      if (!e2eKey) return text;
-      try {
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const encoded = new TextEncoder().encode(text);
-        const ciphertext = await crypto.subtle.encrypt(
-          { name: "AES-GCM", iv: iv },
-          e2eKey,
-          encoded
-        );
-        const ivStr = arrayBufferToBase64(iv);
-        const dataStr = arrayBufferToBase64(ciphertext);
-        return `ENC::v1::${ivStr}::${dataStr}`;
-      } catch (e) {
-        console.error('Encryption failed:', e);
-        return text;
-      }
-    }
-
-    async function decryptMessage(text) {
-      if (!text || !text.startsWith('ENC::v1::')) return text;
-      if (!e2eKey) return '🔒 Encrypted Message (Password required)';
-
-      try {
-        const parts = text.split('::');
-        const iv = base64ToArrayBuffer(parts[2]);
-        const data = base64ToArrayBuffer(parts[3]);
-
-        const decrypted = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: iv },
-          e2eKey,
-          data
-        );
-        return new TextDecoder().decode(decrypted);
-      } catch (e) {
-        console.error('Decryption failed:', e);
-        return '⚠️ Decryption Failed (Wrong password?)';
-      }
-    }
-
-    function arrayBufferToBase64(buffer) {
-      let binary = '';
-      const bytes = new Uint8Array(buffer);
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      return window.btoa(binary);
-    }
-
-    function base64ToArrayBuffer(base64) {
-      const binary_string = window.atob(base64);
-      const len = binary_string.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binary_string.charCodeAt(i);
-      }
-      return bytes.buffer;
-    }
 
     // DOM Elements
     const remoteAudioEl = document.getElementById('remoteAudio');
@@ -1793,47 +1704,29 @@
       localStorage.setItem('chatRoom', myRoom);
       localStorage.setItem('chatName', myName);
 
-      // Derive encryption key from room code
-      try {
-        e2eKey = await deriveKey(myRoom, "salt_fixed_for_compat");
-        log('🔐 E2E encryption enabled for room: ' + myRoom);
-      } catch (err) {
-        log('Encryption setup failed: ' + err.message, 'warn');
-        e2eKey = null;
-      }
-
       log('Joined room: ' + myRoom);
 
       document.getElementById('joinScreen').classList.remove('active');
       chatScreen.classList.add('active');
-      document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
-      addSystemMessage('🔐 End-to-End Encrypted | Tap user count for calls');
+      document.getElementById('roomTitle').textContent = '💬 ' + myRoom;
+      addSystemMessage('Welcome! Tap user count to make audio calls.');
 
       requestNotificationPermission();
     });
 
-    socket.on('rejoinSuccess', async (data) => {
+    socket.on('rejoinSuccess', (data) => {
       myRoom = data.room;
       myName = data.username;
       myId = data.socketId;
       mySessionId = data.sessionId;
 
-      // Re-derive encryption key from room code on rejoin
-      try {
-        e2eKey = await deriveKey(myRoom, "salt_fixed_for_compat");
-        log('🔐 Encryption key restored for room: ' + myRoom);
-      } catch (err) {
-        log('Encryption key restore failed: ' + err.message, 'warn');
-        e2eKey = null;
-      }
-
       log('Rejoined room: ' + myRoom);
-      addSystemMessage('🔐 Reconnected (E2E Encrypted)');
+      addSystemMessage('Reconnected to room');
 
       if (!chatScreen.classList.contains('active')) {
         document.getElementById('joinScreen').classList.remove('active');
         chatScreen.classList.add('active');
-        document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
+        document.getElementById('roomTitle').textContent = '💬 ' + myRoom;
       }
     });
 
@@ -1845,15 +1738,10 @@
       mySessionId = '';
     });
 
-    socket.on('messageHistory', async (messages) => {
+    socket.on('messageHistory', (messages) => {
       log('Received ' + messages.length + ' history messages');
       for (const data of messages) {
         if (data.type === 'image' && data.imageData === '[IMAGE]') continue;
-
-        // Decrypt if needed
-        if (data.type === 'text') {
-          data.text = await decryptMessage(data.text);
-        }
 
         const isMine = data.senderId === myId;
         addMessage(data, isMine ? 'mine' : 'other', true);
@@ -1880,18 +1768,13 @@
     });
 
     // ===== MESSAGE HANDLERS =====
-    socket.on('message', async (data) => {
+    socket.on('message', (data) => {
       const isMine = data.senderId === myId;
 
       // Always skip our own messages from broadcast
       // We show them optimistically and the callback handles status updates
       if (isMine) {
         return;
-      }
-
-      // Decrypt if needed
-      if (data.type === 'text') {
-        data.text = await decryptMessage(data.text);
       }
 
       addMessage(data, 'other');
@@ -2266,7 +2149,7 @@
       }, 2000);
     });
 
-    async function sendMessage() {
+    function sendMessage() {
       const text = msgInput.value.trim();
       if (!text) return;
 
@@ -2298,10 +2181,8 @@
         return;
       }
 
-      // Send to server
-      // Encrypt if key exists
-      const content = await encryptMessage(text);
-      socket.emit('message', content, (response) => {
+      // Send to server (plain text)
+      socket.emit('message', text, (response) => {
         const latency = Math.round(performance.now() - sendTime);
 
         if (response && response.status === 'ok') {
