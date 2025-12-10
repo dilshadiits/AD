@@ -1343,10 +1343,14 @@
 
     // ===== CRYPTO FUNCTIONS =====
     async function deriveKey(password, salt) {
+      // Normalize password: lowercase and remove all spaces
+      // This ensures "MyRoom", "myroom", "my room", "MY ROOM" all generate the same key
+      const normalizedPassword = password.toLowerCase().replace(/\s+/g, '');
+
       const enc = new TextEncoder();
       const keyMaterial = await crypto.subtle.importKey(
         "raw",
-        enc.encode(password),
+        enc.encode(normalizedPassword),
         { name: "PBKDF2" },
         false,
         ["deriveKey"]
