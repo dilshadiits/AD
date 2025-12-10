@@ -1,5 +1,7 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { Server } = require('socket.io');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -88,6 +90,65 @@ const rooms = new Map();
 const messageStore = new Map();
 const activeCalls = new Map();
 const userSessions = new Map(); // Track user sessions for reconnection
+
+// ================== MESSAGE PERSISTENCE ==================
+const MESSAGES_FILE = path.join(__dirname, 'messages.json');
+
+// Save messages to file
+function saveMessages() {
+  try {
+    const data = {};
+    for (const [room, messages] of messageStore.entries()) {
+      // Convert Set to Array for JSON serialization
+      data[room] = messages.map(msg => ({
+        ...msg,
+        seenBy: Array.from(msg.seenBy || [])
+      }));
+    }
+    fs.writeFileSync(MESSAGES_FILE, JSON.stringify(data, null, 2));
+    console.log(`💾 Messages saved (${Object.keys(data).length} rooms)`);
+  } catch (err) {
+    console.error('Failed to save messages:', err.message);
+  }
+}
+
+// Load messages from file
+function loadMessages() {
+  try {
+    if (fs.existsSync(MESSAGES_FILE)) {
+      const data = JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'));
+      for (const [room, messages] of Object.entries(data)) {
+        // Convert Array back to Set for seenBy
+        const restoredMessages = messages.map(msg => ({
+          ...msg,
+          seenBy: new Set(msg.seenBy || [])
+        }));
+        messageStore.set(room, restoredMessages);
+      }
+      console.log(`📂 Messages loaded (${Object.keys(data).length} rooms)`);
+    }
+  } catch (err) {
+    console.error('Failed to load messages:', err.message);
+  }
+}
+
+// Load messages on startup
+loadMessages();
+
+// Auto-save messages every 30 seconds
+setInterval(saveMessages, 30000);
+
+// Save on process exit
+process.on('SIGINT', () => {
+  console.log('\\n🛑 Server shutting down...');
+  saveMessages();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  saveMessages();
+  process.exit(0);
+});
 
 // ================== HELPERS ==================
 function getUsers(room) {

@@ -308,6 +308,7 @@
       font-size: 15px;
       word-break: break-word;
       line-height: 1.4;
+      color: var(--text);
     }
 
     .msg .text img {
@@ -1340,6 +1341,14 @@
     let remoteDescriptionSet = false;
     let audioOutputDevices = [];
 
+    // Helper: Handle old encrypted messages that can't be decrypted anymore
+    function cleanMessageText(text) {
+      if (text && text.startsWith('ENC::v1::')) {
+        return '🔒 [Encrypted message - sent before encryption was disabled]';
+      }
+      return text;
+    }
+
     // DOM Elements
     const remoteAudioEl = document.getElementById('remoteAudio');
     const localAudioMonitor = document.getElementById('localAudioMonitor');
@@ -1743,6 +1752,11 @@
       for (const data of messages) {
         if (data.type === 'image' && data.imageData === '[IMAGE]') continue;
 
+        // Clean old encrypted messages
+        if (data.type === 'text') {
+          data.text = cleanMessageText(data.text);
+        }
+
         const isMine = data.senderId === myId;
         addMessage(data, isMine ? 'mine' : 'other', true);
       }
@@ -1775,6 +1789,11 @@
       // We show them optimistically and the callback handles status updates
       if (isMine) {
         return;
+      }
+
+      // Clean old encrypted messages
+      if (data.type === 'text') {
+        data.text = cleanMessageText(data.text);
       }
 
       addMessage(data, 'other');
