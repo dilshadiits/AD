@@ -79,7 +79,7 @@ app.use(express.static('public', {
 app.use(express.json({ limit: '1mb' })); // Limit JSON body size
 
 // ================== CONSTANTS ==================
-const MAX_MESSAGES_PER_ROOM = 100;
+const MAX_MESSAGES_PER_ROOM = 50;
 const MAX_ROOMS = 1000;
 const MAX_USERS_PER_ROOM = 50;
 
@@ -290,8 +290,8 @@ io.on('connection', (socket) => {
           data: msgData,
           createdAt: Date.now()
         });
-        // Keep only last 100 messages
-        while (roomMsgs.length > 100) {
+        // Keep only last 50 messages
+        while (roomMsgs.length > MAX_MESSAGES_PER_ROOM) {
           roomMsgs.shift();
         }
       }
@@ -350,7 +350,8 @@ io.on('connection', (socket) => {
           data: { ...msgData, imageData: '[IMAGE]' }, // Don't store full image in history
           createdAt: Date.now()
         });
-        while (roomMsgs.length > 100) {
+        // Keep only last 50 messages
+        while (roomMsgs.length > MAX_MESSAGES_PER_ROOM) {
           roomMsgs.shift();
         }
       }

@@ -1593,7 +1593,7 @@
           // Additional free TURN servers for redundancy
           {
             urls: 'turn:relay.metered.ca:80',
-            username: 'e8dd65f92c95c location6bf4bf1',
+            username: 'e8dd65f92c95c6bf4bf1',
             credential: 'DQpDQkhS3f/L4bsi'
           },
           {
@@ -1779,7 +1779,7 @@
       }
     });
 
-    socket.on('joinSuccess', (data) => {
+    socket.on('joinSuccess', async (data) => {
       myRoom = data.room;
       myName = data.username;
       myId = data.socketId;
@@ -1789,24 +1789,42 @@
       localStorage.setItem('chatRoom', myRoom);
       localStorage.setItem('chatName', myName);
 
+      // Derive encryption key from room code
+      try {
+        e2eKey = await deriveKey(myRoom, "salt_fixed_for_compat");
+        log('🔐 E2E encryption enabled for room: ' + myRoom);
+      } catch (err) {
+        log('Encryption setup failed: ' + err.message, 'warn');
+        e2eKey = null;
+      }
+
       log('Joined room: ' + myRoom);
 
       document.getElementById('joinScreen').classList.remove('active');
       chatScreen.classList.add('active');
       document.getElementById('roomTitle').textContent = '🔒 ' + myRoom;
-      addSystemMessage('Welcome! Tap user count to make audio calls.');
+      addSystemMessage('🔐 End-to-End Encrypted | Tap user count for calls');
 
       requestNotificationPermission();
     });
 
-    socket.on('rejoinSuccess', (data) => {
+    socket.on('rejoinSuccess', async (data) => {
       myRoom = data.room;
       myName = data.username;
       myId = data.socketId;
       mySessionId = data.sessionId;
 
+      // Re-derive encryption key from room code on rejoin
+      try {
+        e2eKey = await deriveKey(myRoom, "salt_fixed_for_compat");
+        log('🔐 Encryption key restored for room: ' + myRoom);
+      } catch (err) {
+        log('Encryption key restore failed: ' + err.message, 'warn');
+        e2eKey = null;
+      }
+
       log('Rejoined room: ' + myRoom);
-      addSystemMessage('Reconnected to room');
+      addSystemMessage('🔐 Reconnected (E2E Encrypted)');
 
       if (!chatScreen.classList.contains('active')) {
         document.getElementById('joinScreen').classList.remove('active');
@@ -2061,16 +2079,7 @@
 
       log('Joining room: ' + room);
 
-      // Use Room Code as the Encryption Key (Auto-E2EE)
-      deriveKey(room, "salt_fixed_for_compat").then(key => {
-        e2eKey = key;
-        log('🔐 Encrypted Room: ' + room);
-        addSystemMessage('🔐 End-to-End Encrypted (Key: Room Code)');
-      }).catch(err => {
-        log('Encryption setup failed: ' + err.message, 'warn');
-        e2eKey = null;
-      });
-
+      // E2E Key will be derived in joinSuccess handler
       socket.emit('join', { username: name, roomCode: room, sessionId: mySessionId });
     }
 

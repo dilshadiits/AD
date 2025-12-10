@@ -1,9 +1,9 @@
 // Service Worker for Private Chat
 // Handles caching, offline support, and push notifications
 
-const CACHE_NAME = 'private-chat-v13';
-const STATIC_CACHE = 'private-chat-static-v13';
-const DYNAMIC_CACHE = 'private-chat-dynamic-v13';
+const CACHE_NAME = 'private-chat-v14';
+const STATIC_CACHE = 'private-chat-static-v14';
+const DYNAMIC_CACHE = 'private-chat-dynamic-v14';
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
