@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const fs = require('fs');
@@ -6,6 +7,90 @@ const { Server } = require('socket.io');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const compression = require('compression');
+const { MongoClient } = require('mongodb');
+
+// ================== MONGODB CONFIGURATION ==================
+const MONGODB_URI = process.env.MONGODB_URI;
+const SPECIAL_ROOM = process.env.SPECIAL_ROOM || 'june28';
+let mongoClient = null;
+let mongoDb = null;
+let mongoConnected = false;
+
+// Connect to MongoDB
+async function connectMongoDB() {
+  if (!MONGODB_URI) {
+    console.log('⚠️ MongoDB URI not configured - special room will use JSON storage');
+    return;
+  }
+
+  try {
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    mongoDb = mongoClient.db('privatechat');
+    mongoConnected = true;
+    console.log(`✅ MongoDB connected for room "${SPECIAL_ROOM}"`);
+
+    // Create index for efficient queries
+    await mongoDb.collection('messages').createIndex({ roomCode: 1, timestamp: 1 });
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:', err.message);
+    mongoConnected = false;
+  }
+}
+
+// Save message to MongoDB (for special room only)
+async function saveMessageToMongoDB(roomCode, message) {
+  if (!mongoConnected || roomCode !== SPECIAL_ROOM) return false;
+
+  try {
+    await mongoDb.collection('messages').insertOne({
+      roomCode,
+      ...message,
+      seenBy: Array.from(message.seenBy || []),
+      timestamp: new Date(message.timestamp)
+    });
+    return true;
+  } catch (err) {
+    console.error('MongoDB save error:', err.message);
+    return false;
+  }
+}
+
+// Get messages from MongoDB (for special room only)
+async function getMessagesFromMongoDB(roomCode, limit = 50) {
+  if (!mongoConnected || roomCode !== SPECIAL_ROOM) return null;
+
+  try {
+    const messages = await mongoDb.collection('messages')
+      .find({ roomCode })
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+
+    // Convert to app format and reverse to chronological order
+    return messages.reverse().map(msg => ({
+      ...msg,
+      seenBy: new Set(msg.seenBy || []),
+      timestamp: msg.timestamp.toISOString()
+    }));
+  } catch (err) {
+    console.error('MongoDB load error:', err.message);
+    return null;
+  }
+}
+
+// Normalize room code for comparison (remove spaces, lowercase)
+function normalizeRoomCode(roomCode) {
+  return roomCode.toLowerCase().replace(/\s+/g, '');
+}
+
+// Check if room uses MongoDB
+function usesMongoDB(roomCode) {
+  return mongoConnected && normalizeRoomCode(roomCode) === normalizeRoomCode(SPECIAL_ROOM);
+}
+
+// Initialize MongoDB connection
+connectMongoDB();
 
 const app = express();
 const server = http.createServer(app);
@@ -315,9 +400,34 @@ io.on('connection', (socket) => {
       });
 
       // Get recent messages for the new user
-      const recentMessages = messageStore.get(room) || [];
-      if (recentMessages.length > 0) {
-        socket.emit('messageHistory', recentMessages.slice(-50).map(m => m.data));
+      // For the special room, load from MongoDB if available
+      if (usesMongoDB(room)) {
+        getMessagesFromMongoDB(room, 50).then(mongoMessages => {
+          if (mongoMessages && mongoMessages.length > 0) {
+            console.log(`📂 Loaded ${mongoMessages.length} messages from MongoDB for room: ${room}`);
+            socket.emit('messageHistory', mongoMessages.map(m => ({
+              id: m.id,
+              type: m.type,
+              username: m.username,
+              senderId: m.senderId,
+              text: m.text,
+              imageData: m.imageData,
+              timestamp: m.timestamp
+            })));
+          }
+        }).catch(err => {
+          console.error('MongoDB load error:', err.message);
+          // Fallback to in-memory messages
+          const recentMessages = messageStore.get(room) || [];
+          if (recentMessages.length > 0) {
+            socket.emit('messageHistory', recentMessages.slice(-50).map(m => m.data));
+          }
+        });
+      } else {
+        const recentMessages = messageStore.get(room) || [];
+        if (recentMessages.length > 0) {
+          socket.emit('messageHistory', recentMessages.slice(-50).map(m => m.data));
+        }
       }
 
       socket.to(room).emit('userJoined', { username: name, socketId: socket.id });
@@ -372,6 +482,19 @@ io.on('connection', (socket) => {
         while (roomMsgs.length > MAX_MESSAGES_PER_ROOM) {
           roomMsgs.shift();
         }
+      }
+
+      // Save to MongoDB if this is the special room
+      if (usesMongoDB(socket.roomCode)) {
+        saveMessageToMongoDB(socket.roomCode, {
+          id: msgId,
+          type: 'text',
+          username: socket.username,
+          senderId: socket.id,
+          text: safeText,
+          timestamp: timestamp,
+          seenBy: new Set([socket.id])
+        });
       }
 
       console.log(`💬 ${socket.username}: ${safeText.slice(0, 50)}`);
@@ -432,6 +555,19 @@ io.on('connection', (socket) => {
         while (roomMsgs.length > MAX_MESSAGES_PER_ROOM) {
           roomMsgs.shift();
         }
+      }
+
+      // Save to MongoDB if this is the special room (store image reference, not full data)
+      if (usesMongoDB(socket.roomCode)) {
+        saveMessageToMongoDB(socket.roomCode, {
+          id: msgId,
+          type: 'image',
+          username: socket.username,
+          senderId: socket.id,
+          imageData: imageData, // Store full image in MongoDB
+          timestamp: timestamp,
+          seenBy: new Set([socket.id])
+        });
       }
 
       console.log(`🖼️ ${socket.username} sent image`);

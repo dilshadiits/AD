@@ -1,4 +1,22 @@
 {
   "testroom": [],
-  "user": []
+  "user": [],
+  "june28": [
+    {
+      "id": "mj11pat8-9lnh2beqc74",
+      "senderId": "ZqYR-cR-maayUiuWAAAC",
+      "seenBy": [
+        "ZqYR-cR-maayUiuWAAAC"
+      ],
+      "data": {
+        "id": "mj11pat8-9lnh2beqc74",
+        "type": "text",
+        "username": "gii",
+        "senderId": "ZqYR-cR-maayUiuWAAAC",
+        "text": "hello",
+        "timestamp": "2025-12-11T06:16:40.700Z"
+      },
+      "createdAt": 1765433800700
+    }
+  ]
 }
