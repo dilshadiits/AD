@@ -14,7 +14,8 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "mongodb": "^7.0.0",
-    "socket.io": "^4.8.0"
+    "socket.io": "^4.8.0",
+    "socket.io-client": "^4.8.1"
   },
   "engines": {
     "node": ">=18.0.0"

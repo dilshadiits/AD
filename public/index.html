@@ -2855,6 +2855,142 @@
         log('✅ Added HD voice fmtp line: 48kbps, FEC=on, DTX=off, CBR=on');
       }
 
+      // ===== VIDEO OPTIMIZATION (if video call) =====
+      if (isVideoCall) {
+        log('Optimizing video codec settings...');
+
+        // 1. Prefer VP9 over VP8 and H.264 (better quality/bandwidth ratio)
+        sdp = preferVideoCodec(sdp, 'VP9');
+
+        // 2. Set video bitrate constraints (500kbps min, 2.5Mbps max, 1.2Mbps start)
+        sdp = setVideoBitrate(sdp, 500, 2500, 1200);
+
+        // 3. Enable VP9 scalable video coding for better network adaptation
+        sdp = enableVP9SVC(sdp);
+
+        log('✅ Video SDP optimized: VP9 preferred, bitrate 500-2500kbps, SVC enabled');
+      }
+
+      return sdp;
+    }
+
+    // ===== VIDEO CODEC OPTIMIZATION HELPERS =====
+    // Helper: Prefer specific video codec
+    function preferVideoCodec(sdp, codecName) {
+      const codecMap = {
+        'VP9': 'VP9',
+        'VP8': 'VP8',
+        'H264': 'H264',
+        'H.264': 'H264'
+      };
+
+      const codec = codecMap[codecName] || codecName;
+      const codecRegex = new RegExp('a=rtpmap:(\\d+) ' + codec + '/\\d+', 'i');
+      const match = sdp.match(codecRegex);
+
+      if (!match) {
+        log('Codec ' + codec + ' not found, leaving SDP unchanged', 'warn');
+        return sdp;
+      }
+
+      const codecPayload = match[1];
+      log('Preferring ' + codec + ' (payload ' + codecPayload + ')');
+
+      // Re-order m=video line to prefer this codec
+      const lines = sdp.split('\r\n');
+      let videoMLineIndex = -1;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('m=video')) {
+          videoMLineIndex = i;
+          break;
+        }
+      }
+
+      if (videoMLineIndex === -1) return sdp;
+
+      const mLine = lines[videoMLineIndex];
+      const elements = mLine.split(' ');
+
+      if (elements.length < 4) return sdp;
+
+      // Extract existing payload types
+      const payloads = elements.slice(3);
+
+      // Move preferred codec to front
+      const preferredIndex = payloads.indexOf(codecPayload);
+      if (preferredIndex !== -1) {
+        payloads.splice(preferredIndex, 1);
+        payloads.unshift(codecPayload);
+      }
+
+      // Reconstruct m= line
+      lines[videoMLineIndex] = elements.slice(0, 3).join(' ') + ' ' + payloads.join(' ');
+
+      return lines.join('\r\n');
+    }
+
+    // Helper: Set video bitrate constraints
+    function setVideoBitrate(sdp, minKbps, maxKbps, startKbps) {
+      // Add b=AS (Application-Specific maximum bitrate) line for video
+      let lines = sdp.split('\r\n');
+      let videoMLineIndex = -1;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('m=video')) {
+          videoMLineIndex = i;
+          break;
+        }
+      }
+
+      if (videoMLineIndex === -1) return sdp;
+
+      // Remove existing b=AS lines for video
+      let insertIndex = videoMLineIndex + 1;
+      while (insertIndex < lines.length && !lines[insertIndex].startsWith('m=')) {
+        if (lines[insertIndex].startsWith('b=AS:') || lines[insertIndex].startsWith('b=TIAS:')) {
+          lines.splice(insertIndex, 1);
+        } else {
+          insertIndex++;
+        }
+      }
+
+      // Insert new bandwidth lines (AS = Application Specific, TIAS = Transport Independent Application Specific)
+      const asLine = 'b=AS:' + maxKbps;  // Maximum bitrate
+      const tiasLine = 'b=TIAS:' + (maxKbps * 1000);  // Same in bits/sec
+      lines.splice(videoMLineIndex + 1, 0, asLine, tiasLine);
+
+      log('Video bitrate set: ' + minKbps + '-' + maxKbps + 'kbps (start: ' + startKbps + 'kbps)');
+
+      return lines.join('\r\n');
+    }
+
+    // Helper: Enable VP9 Scalable Video Coding
+    function enableVP9SVC(sdp) {
+      const vp9Match = sdp.match(/a=rtpmap:(\d+) VP9\/\d+/i);
+      if (!vp9Match) return sdp;
+
+      const vp9Payload = vp9Match[1];
+
+      // Check if fmtp line exists for VP9
+      const fmtpRegex = new RegExp('a=fmtp:' + vp9Payload + '\\s+([^\\r\\n]+)', 'i');
+      const fmtpMatch = sdp.match(fmtpRegex);
+
+      // SVC parameters for VP9
+      const svcParams = 'scalability-mode=L3T3';  // 3 spatial layers, 3 temporal layers
+
+      if (fmtpMatch) {
+        // Append to existing fmtp
+        const newFmtp = 'a=fmtp:' + vp9Payload + ' ' + fmtpMatch[1] + ';' + svcParams;
+        sdp = sdp.replace(fmtpRegex, newFmtp);
+      } else {
+        // Add new fmtp line after rtpmap
+        const rtpmapLine = 'a=rtpmap:' + vp9Payload + ' VP9/90000';
+        const newFmtpLine = 'a=fmtp:' + vp9Payload + ' ' + svcParams;
+        sdp = sdp.replace(rtpmapLine, rtpmapLine + '\r\n' + newFmtpLine);
+      }
+
+      log('VP9 SVC enabled (L3T3)');
       return sdp;
     }
 
@@ -3493,11 +3629,171 @@
       // Start audio level meters
       startAudioMeters();
 
-      // Start network quality monitoring
-      startNetworkMonitoring();
+      // Start comprehensive WebRTC stats monitoring
+      startWebRTCStatsMonitoring();
 
       // Reset reconnection attempts
       reconnectAttempts = 0;
+    }
+
+    // ===== WEBRTC STATS MONITORING & BANDWIDTH ADAPTATION =====
+    let statsMonitoringInterval = null;
+    let callStats = {
+      rtt: 0,
+      jitter: 0,
+      packetLoss: 0,
+      bitrate: { audio: 0, video: 0 },
+      timestamp: Date.now()
+    };
+
+    function startWebRTCStatsMonitoring() {
+      if (statsMonitoringInterval) clearInterval(statsMonitoringInterval);
+
+      // Monitor stats every 2 seconds
+      statsMonitoringInterval = setInterval(async () => {
+        if (!pc || pc.connectionState !== 'connected') return;
+
+        try {
+          const stats = await pc.getStats();
+          await processWebRTCStats(stats);
+        } catch (e) {
+          log('Stats error: ' + e.message, 'err');
+        }
+      }, 2000);
+
+      log('Started WebRTC stats monitoring');
+    }
+
+    async function processWebRTCStats(stats) {
+      let inboundAudio = null;
+      let inboundVideo = null;
+      let candidatePair = null;
+
+      stats.forEach(report => {
+        // Get inbound RTP stats
+        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+          inboundAudio = report;
+        } else if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          inboundVideo = report;
+        }
+        // Get ICE candidate pair stats (for RTT)
+        else if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          candidatePair = report;
+        }
+      });
+
+      // Calculate RTT (Round Trip Time)
+      if (candidatePair && candidatePair.currentRoundTripTime !== undefined) {
+        callStats.rtt = Math.round(candidatePair.currentRoundTripTime * 1000); // Convert to ms
+      }
+
+      // Calculate packet loss and jitter for audio
+      if (inboundAudio) {
+        const packetsReceived = inboundAudio.packetsReceived || 0;
+        const packetsLost = inboundAudio.packetsLost || 0;
+        const totalPackets = packetsReceived + packetsLost;
+
+        if (totalPackets > 0) {
+          callStats.packetLoss = ((packetsLost / totalPackets) * 100).toFixed(2);
+        }
+
+        callStats.jitter = inboundAudio.jitter ? Math.round(inboundAudio.jitter * 1000) : 0;
+        callStats.bitrate.audio = calculateBitrate(inboundAudio);
+      }
+
+      // Calculate bitrate for video
+      if (inboundVideo) {
+        callStats.bitrate.video = calculateBitrate(inboundVideo);
+      }
+
+      // Update network quality indicator based on stats
+      updateNetworkQualityFromStats();
+
+      // Adaptive bandwidth control
+      adaptBandwidth();
+
+      // Update debug display if visible
+      updateAudioDebug();
+    }
+
+    function calculateBitrate(report) {
+      const now = Date.now();
+      const bytes = report.bytesReceived || 0;
+
+      if (!report._prevBytes || !report._prevTime) {
+        report._prevBytes = bytes;
+        report._prevTime = now;
+        return 0;
+      }
+
+      const bitrate = Math.round(((bytes - report._prevBytes) * 8) / ((now - report._prevTime) / 1000) / 1000); // kbps
+
+      report._prevBytes = bytes;
+      report._prevTime = now;
+
+      return bitrate;
+    }
+
+    function updateNetworkQualityFromStats() {
+      const networkEl = document.querySelector('.network-quality');
+      if (!networkEl) return;
+
+      // Determine quality based on RTT, packet loss, and jitter
+      let quality = 'excellent';
+
+      if (callStats.rtt > 300 || callStats.packetLoss > 5 || callStats.jitter > 50) {
+        quality = 'poor';
+      } else if (callStats.rtt > 150 || callStats.packetLoss > 2 || callStats.jitter > 30) {
+        quality = 'fair';
+      } else if (callStats.rtt > 80 || callStats.packetLoss > 1 || callStats.jitter > 20) {
+        quality = 'good';
+      }
+
+      // Update UI
+      networkEl.className = 'network-quality ' + (quality === 'poor' ? 'poor' : quality === 'fair' ? 'fair' : '');
+
+      log('Network quality: ' + quality + ' (RTT: ' + callStats.rtt + 'ms, Loss: ' + callStats.packetLoss + '%, Jitter: ' + callStats.jitter + 'ms)');
+    }
+
+    function adaptBandwidth() {
+      if (!isVideoCall || !pc) return;
+
+      // Auto-adjust video quality based on packet loss and RTT
+      const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+      if (!sender) return;
+
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) return;
+
+      const encoding = params.encodings[0];
+
+      // Adapt based on network quality
+      if (callStats.packetLoss > 5 || callStats.rtt > 300) {
+        // Poor network: reduce to low quality
+        encoding.maxBitrate = 500000; // 500kbps
+        encoding.scaleResolutionDownBy = 4; // Quarter resolution
+        log('⚠️ Poor network detected, reducing video quality to LOW');
+      } else if (callStats.packetLoss > 2 || callStats.rtt > 150) {
+        // Fair network: medium quality
+        encoding.maxBitrate = 1200000; // 1.2Mbps
+        encoding.scaleResolutionDownBy = 2; // Half resolution
+        log('📊 Fair network, setting video quality to MEDIUM');
+      } else {
+        // Good network: high quality
+        encoding.maxBitrate = 2500000; // 2.5Mbps
+        encoding.scaleResolutionDownBy = 1; // Full resolution
+        log('✅ Good network, using HIGH quality video');
+      }
+
+      sender.setParameters(params).catch(e => log('Bitrate adaptation error: ' + e.message, 'warn'));
+    }
+
+    function stopWebRTCStatsMonitoring() {
+      if (statsMonitoringInterval) {
+        clearInterval(statsMonitoringInterval);
+        statsMonitoringInterval = null;
+        log('Stopped WebRTC stats monitoring');
+      }
     }
 
     function startCallTimer() {
@@ -3609,8 +3905,9 @@
       // Stop audio meters
       stopAudioMeters();
 
-      // Stop network monitoring
+      // Stop both network monitoring functions
       stopNetworkMonitoring();
+      stopWebRTCStatsMonitoring();
     }
 
     // ===== AUDIO LEVEL METERS =====

@@ -17,6 +17,22 @@
         "timestamp": "2025-12-11T06:16:40.700Z"
       },
       "createdAt": 1765433800700
+    },
+    {
+      "id": "mj12wn4z-h1w22jxdjir",
+      "senderId": "TJKWoI7XyFJXwZJCAAAH",
+      "seenBy": [
+        "TJKWoI7XyFJXwZJCAAAH"
+      ],
+      "data": {
+        "id": "mj12wn4z-h1w22jxdjir",
+        "type": "text",
+        "username": "DebugUser",
+        "senderId": "TJKWoI7XyFJXwZJCAAAH",
+        "text": "Test message for MongoDB persistence 1765435822882",
+        "timestamp": "2025-12-11T06:50:22.883Z"
+      },
+      "createdAt": 1765435822884
     }
   ]
 }

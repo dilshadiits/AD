@@ -38,28 +38,6 @@ async function connectMongoDB() {
   }
 }
 
-// Save message to MongoDB (for special room only)
-async function saveMessageToMongoDB(roomCode, message) {
-  if (!mongoConnected || !usesMongoDB(roomCode)) return false;
-
-  // Use normalized room code for storage
-  const normalizedRoom = normalizeRoomCode(roomCode);
-
-  try {
-    await mongoDb.collection('messages').insertOne({
-      roomCode: normalizedRoom,
-      ...message,
-      seenBy: Array.from(message.seenBy || []),
-      timestamp: new Date(message.timestamp)
-    });
-    console.log(`💾 Message saved to MongoDB for room "${normalizedRoom}"`);
-    return true;
-  } catch (err) {
-    console.error('MongoDB save error:', err.message);
-    return false;
-  }
-}
-
 // Get messages from MongoDB (for special room only)
 async function getMessagesFromMongoDB(roomCode, limit = 50) {
   if (!mongoConnected || !usesMongoDB(roomCode)) return null;
@@ -90,12 +68,39 @@ async function getMessagesFromMongoDB(roomCode, limit = 50) {
 
 // Normalize room code for comparison (remove spaces, lowercase)
 function normalizeRoomCode(roomCode) {
+  if (!roomCode) return '';
   return roomCode.toLowerCase().replace(/\s+/g, '');
 }
 
 // Check if room uses MongoDB
 function usesMongoDB(roomCode) {
-  return mongoConnected && normalizeRoomCode(roomCode) === normalizeRoomCode(SPECIAL_ROOM);
+  const normalizedInput = normalizeRoomCode(roomCode);
+  const normalizedSpecial = normalizeRoomCode(SPECIAL_ROOM);
+  return mongoConnected && normalizedInput === normalizedSpecial;
+}
+
+// Save message to MongoDB (for special room only)
+async function saveMessageToMongoDB(roomCode, message) {
+  if (!mongoConnected) return false;
+  if (!usesMongoDB(roomCode)) return false;
+
+  // Use normalized room code for storage
+  const normalizedRoom = normalizeRoomCode(roomCode);
+
+  try {
+    await mongoDb.collection('messages').insertOne({
+      roomCode: normalizedRoom,
+      ...message,
+      // Ensure specific fields are saved correctly
+      seenBy: Array.from(message.seenBy || []),
+      timestamp: new Date(message.timestamp)
+    });
+    // console.log(`✅ Message saved to MongoDB for room "${normalizedRoom}"`);
+    return true;
+  } catch (err) {
+    console.error('❌ MongoDB save error:', err.message);
+    return false;
+  }
 }
 
 // Initialize MongoDB connection
@@ -1017,22 +1022,35 @@ process.on('unhandledRejection', (reason, promise) => {
 // Prevent Render free tier from sleeping by pinging itself
 const keepAlive = () => {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  const interval = 10 * 60 * 1000; // 10 minutes (Render sleeps after 15)
+  const interval = 8 * 60 * 1000; // 8 minutes (Render sleeps after 15, use 8 for safety margin)
 
   console.log(`⏰ Keep-alive set up for: ${url}`);
 
   // Periodic self-ping
   setInterval(() => {
-    http.get(`${url}/ping`, (res) => {
+    const pingUrl = `${url}/ping`;
+    http.get(pingUrl, (res) => {
       if (res.statusCode === 200) {
-        // console.log('⚡ Keep-alive ping successful');
+        console.log(`⚡ Keep-alive ping successful (${new Date().toLocaleTimeString()})`);
       } else {
-        console.error(`⚠️ Keep-alive ping failed: ${res.statusCode}`);
+        console.error(`⚠️ Keep-alive ping failed: ${res.statusCode} (${new Date().toLocaleTimeString()})`);
       }
     }).on('error', (err) => {
-      console.error('⚠️ Keep-alive ping error:', err.message);
+      console.error(`⚠️ Keep-alive ping error (${new Date().toLocaleTimeString()}):`, err.message);
     });
   }, interval);
+
+  // Send first ping immediately to test connectivity
+  console.log('🔍 Testing keep-alive connectivity...');
+  http.get(`${url}/ping`, (res) => {
+    if (res.statusCode === 200) {
+      console.log('✅ Keep-alive test successful - service will stay awake');
+    } else {
+      console.error(`⚠️ Keep-alive test failed with status: ${res.statusCode}`);
+    }
+  }).on('error', (err) => {
+    console.error('❌ Keep-alive test failed. Check RENDER_EXTERNAL_URL:', err.message);
+  });
 };
 
 // ================== GRACEFUL SHUTDOWN ==================
