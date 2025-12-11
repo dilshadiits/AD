@@ -40,15 +40,19 @@ async function connectMongoDB() {
 
 // Save message to MongoDB (for special room only)
 async function saveMessageToMongoDB(roomCode, message) {
-  if (!mongoConnected || roomCode !== SPECIAL_ROOM) return false;
+  if (!mongoConnected || !usesMongoDB(roomCode)) return false;
+
+  // Use normalized room code for storage
+  const normalizedRoom = normalizeRoomCode(roomCode);
 
   try {
     await mongoDb.collection('messages').insertOne({
-      roomCode,
+      roomCode: normalizedRoom,
       ...message,
       seenBy: Array.from(message.seenBy || []),
       timestamp: new Date(message.timestamp)
     });
+    console.log(`💾 Message saved to MongoDB for room "${normalizedRoom}"`);
     return true;
   } catch (err) {
     console.error('MongoDB save error:', err.message);
@@ -58,20 +62,25 @@ async function saveMessageToMongoDB(roomCode, message) {
 
 // Get messages from MongoDB (for special room only)
 async function getMessagesFromMongoDB(roomCode, limit = 50) {
-  if (!mongoConnected || roomCode !== SPECIAL_ROOM) return null;
+  if (!mongoConnected || !usesMongoDB(roomCode)) return null;
+
+  // Use normalized room code for query
+  const normalizedRoom = normalizeRoomCode(roomCode);
 
   try {
     const messages = await mongoDb.collection('messages')
-      .find({ roomCode })
+      .find({ roomCode: normalizedRoom })
       .sort({ timestamp: -1 })
       .limit(limit)
       .toArray();
+
+    console.log(`📂 MongoDB query for room "${normalizedRoom}" returned ${messages.length} messages`);
 
     // Convert to app format and reverse to chronological order
     return messages.reverse().map(msg => ({
       ...msg,
       seenBy: new Set(msg.seenBy || []),
-      timestamp: msg.timestamp.toISOString()
+      timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp
     }));
   } catch (err) {
     console.error('MongoDB load error:', err.message);
