@@ -914,6 +914,180 @@
       background: var(--danger);
     }
 
+    /* Video Call Styles */
+    .video-container {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      display: none;
+    }
+
+    .video-container.active {
+      display: block;
+    }
+
+    .remote-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .local-video-wrapper {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 120px;
+      height: 160px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      z-index: 10;
+      cursor: move;
+      transition: transform 0.2s;
+    }
+
+    .local-video-wrapper:active {
+      transform: scale(1.05);
+    }
+
+    .local-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      /* Mirror effect */
+      background: #333;
+    }
+
+    .local-video.hidden {
+      display: none;
+    }
+
+    .local-video-off {
+      position: absolute;
+      inset: 0;
+      background: var(--bg-card);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+    }
+
+    .local-video-wrapper.camera-off .local-video-off {
+      display: flex;
+    }
+
+    .local-video-wrapper.camera-off .local-video {
+      display: none;
+    }
+
+    /* Video call info overlay */
+    .video-call-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 20px;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      z-index: 5;
+    }
+
+    .video-call-info {
+      color: #fff;
+    }
+
+    .video-call-info .name {
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .video-call-info .timer {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.8);
+      font-family: monospace;
+    }
+
+    /* Video call controls */
+    .video-call-controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 30px 20px;
+      padding-bottom: max(30px, env(safe-area-inset-bottom));
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      z-index: 5;
+    }
+
+    .ctrl-btn.camera {
+      background: #3b82f6;
+    }
+
+    .ctrl-btn.flip {
+      background: #8b5cf6;
+    }
+
+    .ctrl-btn.camera.off,
+    .ctrl-btn.flip.off {
+      background: #666;
+    }
+
+    /* Call type buttons in user modal */
+    .call-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .call-btn.audio-call {
+      background: var(--success);
+      padding: 8px 12px;
+    }
+
+    .call-btn.video-call {
+      background: #3b82f6;
+      padding: 8px 12px;
+    }
+
+    /* Remote video placeholder when no stream */
+    .remote-video-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, var(--bg-dark), var(--bg-darker));
+      z-index: 1;
+    }
+
+    .remote-video-placeholder .avatar {
+      width: 120px;
+      height: 120px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 60px;
+      margin-bottom: 20px;
+    }
+
+    .remote-video-placeholder.connected .avatar {
+      background: linear-gradient(135deg, var(--success), var(--success-light));
+    }
+
+    .remote-video-placeholder.hidden {
+      display: none;
+    }
+
     /* Network Quality Indicator */
     .network-quality {
       position: absolute;
@@ -1197,8 +1371,8 @@
 
   <!-- Incoming Call Modal -->
   <div class="incoming-modal" id="incomingModal">
-    <div class="avatar">📞</div>
-    <h2>Incoming Audio Call</h2>
+    <div class="avatar" id="incomingCallAvatar">📞</div>
+    <h2 id="incomingCallType">Incoming Audio Call</h2>
     <p id="callerName">Someone is calling...</p>
     <div class="btns">
       <button class="reject" id="rejectBtn" aria-label="Reject call">✕</button>
@@ -1206,9 +1380,37 @@
     </div>
   </div>
 
-  <!-- Audio Call Screen -->
+  <!-- Call Screen (Audio & Video) -->
   <div class="screen" id="callScreen">
-    <div class="call-container">
+    <!-- Video Container (hidden for audio calls) -->
+    <div class="video-container" id="videoContainer">
+      <!-- Remote video placeholder (shown while connecting) -->
+      <div class="remote-video-placeholder" id="remoteVideoPlaceholder">
+        <div class="avatar" id="videoCallAvatar">📹</div>
+        <div class="call-name" id="videoCallName">User</div>
+        <div class="call-status-text" id="videoCallStatus">Connecting...</div>
+      </div>
+      <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
+      <div class="local-video-wrapper" id="localVideoWrapper">
+        <video id="localVideo" class="local-video" autoplay playsinline muted></video>
+        <div class="local-video-off">📷</div>
+      </div>
+      <div class="video-call-overlay">
+        <div class="video-call-info">
+          <div class="name" id="videoOverlayName">User</div>
+          <div class="timer" id="videoCallTimer">00:00</div>
+        </div>
+      </div>
+      <div class="video-call-controls">
+        <button class="ctrl-btn flip" id="flipCameraBtn" aria-label="Flip camera">🔄</button>
+        <button class="ctrl-btn camera" id="cameraBtn" aria-label="Toggle camera">📹</button>
+        <button class="ctrl-btn mic" id="videoMicBtn" aria-label="Toggle microphone">🎤</button>
+        <button class="ctrl-btn end" id="videoEndBtn" aria-label="End call">✕</button>
+      </div>
+    </div>
+
+    <!-- Audio-only call container -->
+    <div class="call-container" id="audioCallContainer">
       <div class="call-avatar ringing" id="callAvatar">📞</div>
       <div class="call-name" id="callName">User</div>
       <div class="call-status-text" id="callStatusText">Connecting...</div>
@@ -1250,9 +1452,8 @@
       <div id="callStats" style="font-size: 12px; color: yellow; margin-bottom: 10px; font-family: monospace;">Waiting
         for data...</div>
       <div class="audio-debug" id="audioDebug"></div>
-      <div class="audio-debug" id="audioDebug"></div>
     </div>
-    <div class="call-controls">
+    <div class="call-controls" id="audioCallControls">
       <button class="ctrl-btn speaker" id="speakerBtn" aria-label="Toggle speaker">🔊</button>
       <button class="ctrl-btn mic" id="micBtn" aria-label="Toggle microphone">🎤</button>
       <button class="ctrl-btn" id="testAudioBtn"
@@ -1260,8 +1461,7 @@
         Sound</button>
       <button class="ctrl-btn end" id="endBtn" aria-label="End call">✕</button>
     </div>
-    <!-- Multiple audio elements for better compatibility -->
-    <!-- Remove autoplay to control earpiece/speaker routing -->
+    <!-- Audio elements -->
     <audio id="remoteAudio" autoplay playsinline></audio>
     <audio id="localAudioMonitor" muted></audio>
   </div>
@@ -1320,6 +1520,13 @@
     let lastConnectedTime = 0;
     let networkType = 'unknown';
 
+    // Background Connection Keep-Alive State
+    let backgroundKeepAliveActive = false;
+    let backgroundHeartbeatInterval = null;
+    let wakeLock = null;
+    let isInBackground = false;
+    let chatKeepAliveInterval = null;
+
     // WebRTC State
     let pc = null;
     let localStream = null;
@@ -1341,6 +1548,11 @@
     let remoteDescriptionSet = false;
     let audioOutputDevices = [];
 
+    // Video Call State
+    let isVideoCall = false;       // Track if current call is video
+    let cameraOff = false;         // Camera mute state
+    let facingMode = 'user';       // 'user' (front) or 'environment' (back)
+
     // Helper: Handle old encrypted messages that can't be decrypted anymore
     function cleanMessageText(text) {
       if (text && text.startsWith('ENC::v1::')) {
@@ -1358,6 +1570,15 @@
     const connectionStatus = document.getElementById('connectionStatus');
     const joinError = document.getElementById('joinError');
     const offlineBanner = document.getElementById('offlineBanner');
+
+    // Video Call DOM Elements
+    const videoContainer = document.getElementById('videoContainer');
+    const remoteVideoEl = document.getElementById('remoteVideo');
+    const localVideoEl = document.getElementById('localVideo');
+    const localVideoWrapper = document.getElementById('localVideoWrapper');
+    const remoteVideoPlaceholder = document.getElementById('remoteVideoPlaceholder');
+    const audioCallContainer = document.getElementById('audioCallContainer');
+    const audioCallControls = document.getElementById('audioCallControls');
 
     // ===== ONLINE/OFFLINE HANDLERS =====
     window.addEventListener('online', () => {
@@ -1719,8 +1940,12 @@
       chatScreen.classList.add('active');
       document.getElementById('roomTitle').textContent = '💬 ' + myRoom;
       addSystemMessage('Welcome! Tap user count to make audio calls.');
+      addSystemMessage('💡 Chat stays connected in background until you leave.');
 
       requestNotificationPermission();
+
+      // Request wake lock to keep connection alive
+      requestWakeLock();
     });
 
     socket.on('rejoinSuccess', (data) => {
@@ -1737,6 +1962,9 @@
         chatScreen.classList.add('active');
         document.getElementById('roomTitle').textContent = '💬 ' + myRoom;
       }
+
+      // Re-acquire wake lock on rejoin
+      requestWakeLock();
     });
 
     socket.on('rejoinFailed', (data) => {
@@ -1862,15 +2090,23 @@
         socket.emit('markSeen', unseenMessages);
         unseenMessages = [];
       }
+      // Resume background keep-alive when coming back to foreground
+      if (myRoom && isConnected) {
+        backgroundKeepAliveActive = false; // Reset to normal mode
+        // Note: stopChatKeepAlive() is called in visibilitychange handler
+        log('Returned to foreground, normal mode resumed');
+      }
     });
 
+    // Regular heartbeat - more aggressive for better connection maintenance
     setInterval(() => {
       if (isConnected && myRoom) socket.emit('heartbeat');
-    }, 30000);
+    }, 15000); // Reduced from 30s to 15s
 
     // ===== WEBRTC SIGNALING =====
     socket.on('incomingCall', (data) => {
-      log('📞 Incoming call from: ' + data.callerName);
+      const callType = data.isVideo ? 'video' : 'audio';
+      log((data.isVideo ? '📹' : '📞') + ' Incoming ' + callType + ' call from: ' + data.callerName);
 
       if (document.getElementById('callScreen').classList.contains('active')) {
         socket.emit('rejectCall', { targetId: data.callerId });
@@ -1878,11 +2114,20 @@
       }
 
       incomingData = data;
+      isVideoCall = data.isVideo || false;
+
+      // Update incoming call modal UI based on call type
+      document.getElementById('incomingCallAvatar').textContent = data.isVideo ? '📹' : '📞';
+      document.getElementById('incomingCallType').textContent = 'Incoming ' + (data.isVideo ? 'Video' : 'Audio') + ' Call';
       document.getElementById('callerName').textContent = data.callerName + ' is calling...';
       document.getElementById('incomingModal').classList.add('show');
 
       if (!document.hasFocus()) {
-        showLocalNotification('📞 Incoming Call', data.callerName + ' is calling...', { type: 'call' });
+        showLocalNotification(
+          (data.isVideo ? '📹' : '📞') + ' Incoming ' + (data.isVideo ? 'Video' : 'Audio') + ' Call',
+          data.callerName + ' is calling...',
+          { type: 'call' }
+        );
       }
 
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
@@ -2394,14 +2639,33 @@
           escapeHtml(u.username) + (isMe ? ' (you)' : '') + '</span>';
 
         if (!isMe && isOnline) {
-          const btn = document.createElement('button');
-          btn.className = 'call-btn';
-          btn.textContent = '📞 Call';
-          btn.onclick = () => {
+          // Create button container for both call types
+          const btnContainer = document.createElement('div');
+          btnContainer.className = 'call-buttons';
+
+          // Audio call button
+          const audioBtn = document.createElement('button');
+          audioBtn.className = 'call-btn audio-call';
+          audioBtn.textContent = '📞';
+          audioBtn.title = 'Audio Call';
+          audioBtn.onclick = () => {
             document.getElementById('userModal').classList.remove('show');
-            startCall(u.socketId, u.username);
+            startCall(u.socketId, u.username, false); // false = audio only
           };
-          div.appendChild(btn);
+          btnContainer.appendChild(audioBtn);
+
+          // Video call button
+          const videoBtn = document.createElement('button');
+          videoBtn.className = 'call-btn video-call';
+          videoBtn.textContent = '📹';
+          videoBtn.title = 'Video Call';
+          videoBtn.onclick = () => {
+            document.getElementById('userModal').classList.remove('show');
+            startCall(u.socketId, u.username, true); // true = video call
+          };
+          btnContainer.appendChild(videoBtn);
+
+          div.appendChild(btnContainer);
         } else if (!isOnline && u.lastSeen) {
           const date = new Date(u.lastSeen);
           const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -2417,34 +2681,72 @@
 
     document.getElementById('leaveBtn').addEventListener('click', () => {
       if (confirm('Leave room?')) {
+        log('Leaving room...');
+
+        // Stop background keep-alive
+        stopChatKeepAlive();
+
+        // Release wake lock
+        releaseWakeLock();
+
+        // Disconnect socket to immediately notify others
+        socket.disconnect();
+
+        // Clear local storage
         localStorage.removeItem('chatSessionId');
         localStorage.removeItem('chatRoom');
         localStorage.removeItem('chatName');
+
+        // Reset state
+        myRoom = '';
+        myName = '';
+        mySessionId = '';
+
         location.reload();
       }
     });
 
     // ===== AUDIO CALL FUNCTIONS =====
-    async function startCall(targetId, targetName) {
-      log('📞 Starting call to ' + targetName);
+    async function startCall(targetId, targetName, withVideo = false) {
+      log((withVideo ? '📹' : '📞') + ' Starting ' + (withVideo ? 'video' : 'audio') + ' call to ' + targetName);
 
       callTarget = targetId;
       callTargetName = targetName;
+      isVideoCall = withVideo;
       iceQueue = [];
       remoteDescriptionSet = false;
       isCallConnected = false;
+      cameraOff = false;
 
       // CRITICAL: Initialize audio context before getting media
       initAudioContext();
 
       document.getElementById('callScreen').classList.add('active');
-      document.getElementById('callName').textContent = targetName;
-      document.getElementById('callStatusText').textContent = 'Calling...';
-      document.getElementById('callTimer').textContent = '00:00';
-      document.getElementById('callAvatar').className = 'call-avatar ringing';
+
+      // Setup UI based on call type
+      if (withVideo) {
+        // Video call UI
+        videoContainer.classList.add('active');
+        audioCallContainer.style.display = 'none';
+        audioCallControls.style.display = 'none';
+        document.getElementById('videoCallName').textContent = targetName;
+        document.getElementById('videoOverlayName').textContent = targetName;
+        document.getElementById('videoCallStatus').textContent = 'Calling...';
+        document.getElementById('videoCallTimer').textContent = '00:00';
+        remoteVideoPlaceholder.classList.remove('hidden', 'connected');
+      } else {
+        // Audio call UI
+        videoContainer.classList.remove('active');
+        audioCallContainer.style.display = 'flex';
+        audioCallControls.style.display = 'flex';
+        document.getElementById('callName').textContent = targetName;
+        document.getElementById('callStatusText').textContent = 'Calling...';
+        document.getElementById('callTimer').textContent = '00:00';
+        document.getElementById('callAvatar').className = 'call-avatar ringing';
+      }
 
       try {
-        await getAudio();
+        await getMedia(withVideo);
         await createPC();
 
         // Add tracks to peer connection
@@ -2453,22 +2755,29 @@
           pc.addTrack(track, localStream);
         });
 
+        // Show local video preview for video calls
+        if (withVideo && localStream) {
+          localVideoEl.srcObject = localStream;
+          localVideoWrapper.classList.remove('camera-off');
+        }
+
         // Create and set local description
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
-          offerToReceiveVideo: false,
+          offerToReceiveVideo: withVideo,
           voiceActivityDetection: true
         });
 
         // Apply low-bandwidth optimizations to SDP
         const modifiedSdp = sdpMunge(offer.sdp);
         await pc.setLocalDescription({ type: offer.type, sdp: modifiedSdp });
-        log('Local description set (offer) with low-bw optimizations');
+        log('Local description set (offer)');
 
         socket.emit('callUser', {
           targetId: targetId,
           offer: pc.localDescription,
-          callerName: myName
+          callerName: myName,
+          isVideo: withVideo
         });
 
         // Start background keep-alive
@@ -2545,74 +2854,92 @@
       return sdp;
     }
 
-    async function getAudio() {
-      log('Requesting microphone access...');
+    async function getMedia(withVideo = false) {
+      log('Requesting ' + (withVideo ? 'camera & microphone' : 'microphone') + ' access...');
 
       // Detect platform
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
       const isAndroid = /Android/.test(navigator.userAgent);
 
-      // iOS Safari doesn't support all advanced constraints
-      const advancedConstraints = {
+      // Audio constraints
+      const advancedAudioConstraints = {
         echoCancellation: { ideal: true },
         noiseSuppression: { ideal: true },
         autoGainControl: { ideal: true },
-        // Advanced constraints for "WhatsApp-like" quality on Chrome/Android
         googEchoCancellation: { ideal: true },
         googAutoGainControl: { ideal: true },
         googNoiseSuppression: { ideal: true },
         googHighpassFilter: { ideal: true },
         googTypingNoiseDetection: { ideal: true },
-        channelCount: { ideal: 1 }, // Mono is best for voice calls
+        channelCount: { ideal: 1 },
         sampleRate: { ideal: 48000 },
         sampleSize: { ideal: 16 }
       };
 
-      // Simpler constraints for iOS (Safari doesn't support goog* constraints)
-      const simpleConstraints = {
+      const simpleAudioConstraints = {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true
       };
 
+      // Video constraints
+      const videoConstraints = withVideo ? {
+        facingMode: facingMode,
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 },
+        frameRate: { ideal: 30, max: 30 }
+      } : false;
+
       try {
-        // First try with advanced constraints
         localStream = await navigator.mediaDevices.getUserMedia({
-          video: false,
-          audio: isIOS ? simpleConstraints : advancedConstraints
+          video: videoConstraints,
+          audio: isIOS ? simpleAudioConstraints : advancedAudioConstraints
         });
 
         const audioTracks = localStream.getAudioTracks();
-        log('Microphone access granted. Tracks: ' + audioTracks.length);
+        const videoTracks = localStream.getVideoTracks();
+        log('Media access granted. Audio tracks: ' + audioTracks.length + ', Video tracks: ' + videoTracks.length);
 
         if (audioTracks.length > 0) {
           const settings = audioTracks[0].getSettings();
           log('Audio settings: ' + JSON.stringify(settings));
-
-          // Log platform-specific info
-          log(`Platform: ${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Desktop'}`);
         }
 
+        if (videoTracks.length > 0) {
+          const settings = videoTracks[0].getSettings();
+          log('Video settings: ' + settings.width + 'x' + settings.height + '@' + settings.frameRate + 'fps');
+        }
+
+        log(`Platform: ${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Desktop'}`);
         return localStream;
 
       } catch (e) {
-        log('Microphone error with primary constraints: ' + e.message, 'warn');
+        log('Media error with primary constraints: ' + e.message, 'warn');
 
         // Fallback to simple constraints
         try {
-          log('Trying fallback audio constraints...');
+          log('Trying fallback constraints...');
           localStream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: true // Simplest possible - just get any audio
+            video: withVideo ? true : false,
+            audio: true
           });
 
-          log('Fallback microphone access granted');
+          log('Fallback media access granted');
           return localStream;
         } catch (e2) {
-          log('Microphone error: ' + e2.message, 'err');
-          throw new Error('Microphone access denied. Please allow microphone access.');
+          log('Media error: ' + e2.message, 'err');
+          if (withVideo) {
+            throw new Error('Camera/Microphone access denied. Please allow access.');
+          } else {
+            throw new Error('Microphone access denied. Please allow microphone access.');
+          }
         }
       }
+    }
+
+    // Keep getAudio for backward compatibility
+    async function getAudio() {
+      return getMedia(false);
     }
 
     async function createPC() {
@@ -2636,7 +2963,7 @@
       // NOTE: We do NOT call addTransceiver here - addTrack() creates one automatically
       // Having duplicate transceivers can cause negotiation issues
 
-      // Handle incoming tracks - CRITICAL FIX
+      // Handle incoming tracks - supports both audio and video
       pc.ontrack = (event) => {
         log('🔊 Received remote track: ' + event.track.kind + ', readyState: ' + event.track.readyState);
 
@@ -2671,6 +2998,38 @@
             log('Remote audio track unmuted');
           };
         }
+
+        // Handle video track
+        if (event.track.kind === 'video') {
+          log('📹 Video track received');
+
+          if (event.streams && event.streams[0]) {
+            remoteVideoEl.srcObject = event.streams[0];
+          } else {
+            remoteStream.addTrack(event.track);
+            remoteVideoEl.srcObject = remoteStream;
+          }
+
+          // Hide placeholder, show actual video
+          remoteVideoPlaceholder.classList.add('hidden');
+
+          // Handle video track events
+          event.track.onended = () => {
+            log('Remote video track ended', 'warn');
+            remoteVideoPlaceholder.classList.remove('hidden');
+          };
+
+          event.track.onmute = () => {
+            log('Remote video track muted (camera off)', 'warn');
+            remoteVideoPlaceholder.classList.remove('hidden');
+            remoteVideoPlaceholder.classList.add('connected');
+          };
+
+          event.track.onunmute = () => {
+            log('Remote video track unmuted (camera on)');
+            remoteVideoPlaceholder.classList.add('hidden');
+          };
+        }
       };
 
       pc.onicecandidate = (event) => {
@@ -2691,13 +3050,13 @@
 
         switch (pc.iceConnectionState) {
           case 'checking':
-            document.getElementById('callStatusText').textContent = 'Connecting...';
+            updateCallStatus('Connecting...');
             // Set a timeout - if we're still checking after 30 seconds, something is wrong
             if (!window.iceCheckingTimeout) {
               window.iceCheckingTimeout = setTimeout(() => {
                 if (pc && pc.iceConnectionState === 'checking') {
                   log('ICE connection timeout - stuck in checking state', 'err');
-                  document.getElementById('callStatusText').textContent = 'Connection failed - retrying...';
+                  updateCallStatus('Connection failed - retrying...');
                   pc.restartIce();
                 }
               }, 30000);
@@ -2714,12 +3073,12 @@
             break;
           case 'failed':
             log('ICE failed, restarting...', 'warn');
-            document.getElementById('callStatusText').textContent = 'Reconnecting...';
+            updateCallStatus('Reconnecting...');
             pc.restartIce();
             break;
           case 'disconnected':
             log('Connection interrupted, attempting auto-reconnect...');
-            document.getElementById('callStatusText').textContent = 'Reconnecting...';
+            updateCallStatus('Reconnecting...');
 
             // Try automatic recovery by restarting ICE immediately
             if (pc) pc.restartIce();
@@ -2727,7 +3086,7 @@
             // If it doesn't recover quickly, show the manual button
             setTimeout(() => {
               if (pc && pc.connectionState !== 'connected') {
-                document.getElementById('callStatusText').textContent = 'Connection unstable...';
+                updateCallStatus('Connection unstable...');
                 document.getElementById('reconnectBtn').style.display = 'block';
               }
             }, 3000);
@@ -2739,7 +3098,7 @@
       document.getElementById('reconnectBtn').onclick = () => {
         log('Manual ICE restart requested');
         document.getElementById('reconnectBtn').style.display = 'none';
-        document.getElementById('callStatusText').textContent = 'Reconnecting...';
+        updateCallStatus('Reconnecting...');
         if (pc) pc.restartIce();
       };
 
@@ -2829,7 +3188,7 @@
         setCallConnected();
       } catch (err) {
         log('Audio autoplay blocked: ' + err.message, 'warn');
-        document.getElementById('callStatusText').textContent = 'Tap screen to enable audio';
+        updateCallStatus('Tap screen to enable audio');
 
         // Add click handlers to enable audio
         const enableAudio = async () => {
@@ -3104,14 +3463,27 @@
       }
     }
 
+    // Helper to update call status text for both audio and video calls
+    function updateCallStatus(text) {
+      document.getElementById('callStatusText').textContent = text;
+      document.getElementById('videoCallStatus').textContent = text;
+    }
+
     function setCallConnected() {
       if (isCallConnected) return;
       isCallConnected = true;
 
-      document.getElementById('callStatusText').textContent = 'Connected';
-      document.getElementById('callAvatar').className = 'call-avatar connected';
+      // Update UI based on call type
+      if (isVideoCall) {
+        document.getElementById('videoCallStatus').textContent = 'Connected';
+        remoteVideoPlaceholder.classList.add('connected');
+      } else {
+        document.getElementById('callStatusText').textContent = 'Connected';
+        document.getElementById('callAvatar').className = 'call-avatar connected';
+      }
+
       startCallTimer();
-      log('✅ Call connected!');
+      log('✅ ' + (isVideoCall ? 'Video' : 'Audio') + ' call connected!');
       updateAudioDebug();
 
       // Start audio level meters
@@ -3131,8 +3503,11 @@
         callSeconds++;
         const mins = Math.floor(callSeconds / 60);
         const secs = callSeconds % 60;
-        document.getElementById('callTimer').textContent =
-          (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+        const timeStr = (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+
+        // Update both timers (only one will be visible)
+        document.getElementById('callTimer').textContent = timeStr;
+        document.getElementById('videoCallTimer').textContent = timeStr;
       }, 1000);
     }
 
@@ -3480,13 +3855,13 @@
       if (!callTarget || !isCallConnected) return;
       if (reconnectAttempts >= maxReconnectAttempts) {
         log('Max reconnection attempts reached', 'err');
-        document.getElementById('callStatusText').textContent = 'Connection lost';
+        updateCallStatus('Connection lost');
         return;
       }
 
       reconnectAttempts++;
       log('Attempting call reconnection (' + reconnectAttempts + '/' + maxReconnectAttempts + ')...');
-      document.getElementById('callStatusText').textContent = 'Reconnecting... (' + reconnectAttempts + ')';
+      updateCallStatus('Reconnecting... (' + reconnectAttempts + ')');
 
       try {
         // First try ICE restart
@@ -3511,7 +3886,7 @@
 
           if (pc && (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed')) {
             log('Reconnection successful!');
-            document.getElementById('callStatusText').textContent = 'Connected';
+            updateCallStatus('Connected');
             reconnectAttempts = 0;
             return;
           }
@@ -3569,8 +3944,8 @@
         navigator.serviceWorker.controller.postMessage({
           type: 'SHOW_NOTIFICATION',
           payload: {
-            title: '📞 Call in Progress',
-            body: 'Audio call with ' + callTargetName,
+            title: (isVideoCall ? '📹' : '📞') + ' Call in Progress',
+            body: (isVideoCall ? 'Video' : 'Audio') + ' call with ' + callTargetName,
             tag: 'ongoing-call',
             data: { type: 'call' }
           }
@@ -3698,33 +4073,57 @@
 
     // ===== ACCEPT CALL =====
     document.getElementById('acceptBtn').addEventListener('click', async () => {
-      log('Accepting call...');
+      log('Accepting ' + (isVideoCall ? 'video' : 'audio') + ' call...');
       document.getElementById('incomingModal').classList.remove('show');
 
       callTarget = incomingData.callerId;
       callTargetName = incomingData.callerName;
+      cameraOff = false;
       // NOTE: Do NOT reset iceQueue here! We need to keep the candidates that were queued while waiting
-      // iceQueue = []; // REMOVED - this was clearing candidates received before accept
       remoteDescriptionSet = false;
       isCallConnected = false;
 
       initAudioContext();
 
       document.getElementById('callScreen').classList.add('active');
-      document.getElementById('callName').textContent = callTargetName;
-      document.getElementById('callStatusText').textContent = 'Connecting...';
-      document.getElementById('callTimer').textContent = '00:00';
-      document.getElementById('callAvatar').className = 'call-avatar ringing';
+
+      // Setup UI based on call type
+      if (isVideoCall) {
+        // Video call UI
+        videoContainer.classList.add('active');
+        audioCallContainer.style.display = 'none';
+        audioCallControls.style.display = 'none';
+        document.getElementById('videoCallName').textContent = callTargetName;
+        document.getElementById('videoOverlayName').textContent = callTargetName;
+        document.getElementById('videoCallStatus').textContent = 'Connecting...';
+        document.getElementById('videoCallTimer').textContent = '00:00';
+        remoteVideoPlaceholder.classList.remove('hidden', 'connected');
+      } else {
+        // Audio call UI  
+        videoContainer.classList.remove('active');
+        audioCallContainer.style.display = 'flex';
+        audioCallControls.style.display = 'flex';
+        document.getElementById('callName').textContent = callTargetName;
+        document.getElementById('callStatusText').textContent = 'Connecting...';
+        document.getElementById('callTimer').textContent = '00:00';
+        document.getElementById('callAvatar').className = 'call-avatar ringing';
+      }
 
       try {
         log('ICE candidates in queue before setup: ' + iceQueue.length);
-        await getAudio();
+        await getMedia(isVideoCall);
         await createPC();
 
         localStream.getTracks().forEach(track => {
           log('Adding local track: ' + track.kind);
           pc.addTrack(track, localStream);
         });
+
+        // Show local video preview for video calls
+        if (isVideoCall && localStream) {
+          localVideoEl.srcObject = localStream;
+          localVideoWrapper.classList.remove('camera-off');
+        }
 
         // Set remote description first (the offer)
         await pc.setRemoteDescription(new RTCSessionDescription(incomingData.offer));
@@ -3739,7 +4138,7 @@
         // Apply low-bandwidth optimizations to SDP
         const modifiedSdp = sdpMunge(answer.sdp);
         await pc.setLocalDescription({ type: answer.type, sdp: modifiedSdp });
-        log('Local description set (answer) with low-bw optimizations');
+        log('Local description set (answer)');
 
         socket.emit('answerCall', {
           targetId: incomingData.callerId,
@@ -3816,14 +4215,32 @@
         pc = null;
       }
 
+      // Clear audio elements
       remoteAudioEl.srcObject = null;
       remoteAudioEl.pause();
 
+      // Clear video elements
+      if (localVideoEl) {
+        localVideoEl.srcObject = null;
+      }
+      if (remoteVideoEl) {
+        remoteVideoEl.srcObject = null;
+      }
+
+      // Reset UI
       document.getElementById('callScreen').classList.remove('active');
       document.getElementById('incomingModal').classList.remove('show');
       document.getElementById('networkQuality').className = 'network-quality';
       document.getElementById('reconnectBtn').style.display = 'none';
 
+      // Reset video UI
+      videoContainer.classList.remove('active');
+      audioCallContainer.style.display = 'flex';
+      audioCallControls.style.display = 'flex';
+      localVideoWrapper.classList.remove('camera-off');
+      remoteVideoPlaceholder.classList.remove('hidden', 'connected');
+
+      // Reset state
       callTarget = null;
       callTargetName = '';
       incomingData = null;
@@ -3833,7 +4250,10 @@
       speakerMode = false;
       remoteDescriptionSet = false;
       isCallConnected = false;
+      isVideoCall = false;
+      cameraOff = false;
 
+      // Reset button states
       document.getElementById('micBtn').classList.remove('off');
       document.getElementById('micBtn').textContent = '🎤';
       document.getElementById('speakerBtn').classList.remove('off', 'active');
@@ -3853,6 +4273,99 @@
 
       this.classList.toggle('off', micOff);
       this.textContent = micOff ? '🔇' : '🎤';
+    });
+
+    // ===== VIDEO CALL CONTROLS =====
+
+    // Video Mic Toggle
+    document.getElementById('videoMicBtn').addEventListener('click', function () {
+      if (!localStream) return;
+
+      micOff = !micOff;
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !micOff;
+        log('Mic track enabled: ' + track.enabled);
+      });
+
+      this.classList.toggle('off', micOff);
+      this.textContent = micOff ? '🔇' : '🎤';
+    });
+
+    // Camera Toggle
+    document.getElementById('cameraBtn').addEventListener('click', function () {
+      if (!localStream) return;
+
+      cameraOff = !cameraOff;
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !cameraOff;
+        log('Camera track enabled: ' + track.enabled);
+      });
+
+      this.classList.toggle('off', cameraOff);
+      this.textContent = cameraOff ? '📷' : '📹';
+      localVideoWrapper.classList.toggle('camera-off', cameraOff);
+    });
+
+    // Flip Camera (front/back)
+    document.getElementById('flipCameraBtn').addEventListener('click', async function () {
+      if (!localStream || !isVideoCall) return;
+
+      log('Flipping camera...');
+      facingMode = facingMode === 'user' ? 'environment' : 'user';
+
+      // Stop current video track
+      const currentVideoTrack = localStream.getVideoTracks()[0];
+      if (currentVideoTrack) {
+        currentVideoTrack.stop();
+      }
+
+      try {
+        // Get new stream with flipped camera
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Replace track in peer connection
+        if (pc) {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender) {
+            await sender.replaceTrack(newVideoTrack);
+            log('Camera flipped to: ' + facingMode);
+          }
+        }
+
+        // Update local stream and preview
+        localStream.removeTrack(currentVideoTrack);
+        localStream.addTrack(newVideoTrack);
+        localVideoEl.srcObject = localStream;
+
+      } catch (e) {
+        log('Failed to flip camera: ' + e.message, 'err');
+        facingMode = facingMode === 'user' ? 'environment' : 'user'; // Revert
+      }
+    });
+
+    // Video End Call Button
+    document.getElementById('videoEndBtn').addEventListener('click', () => {
+      log('Ending video call');
+
+      if (callTarget) {
+        socket.emit('endCall', { targetId: callTarget });
+      }
+
+      const duration = document.getElementById('videoCallTimer').textContent;
+      if (duration !== '00:00') {
+        addSystemMessage('Video call ended (' + duration + ')');
+      }
+
+      cleanupCall();
     });
 
     // ===== SPEAKER/EARPIECE TOGGLE =====
@@ -3976,17 +4489,81 @@
     }
 
 
+    // ===== WAKE LOCK API - PREVENT DEVICE SLEEP =====
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) {
+        log('Wake Lock API not supported');
+        return;
+      }
+
+      try {
+        // Release any existing lock first
+        if (wakeLock) {
+          await wakeLock.release();
+        }
+
+        wakeLock = await navigator.wakeLock.request('screen');
+        log('Wake Lock acquired - device will stay awake');
+
+        // Listen for wake lock release
+        wakeLock.addEventListener('release', () => {
+          log('Wake Lock released');
+          wakeLock = null;
+        });
+      } catch (err) {
+        log('Wake Lock error: ' + err.message, 'warn');
+        wakeLock = null;
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) {
+        wakeLock.release()
+          .then(() => {
+            log('Wake Lock released manually');
+            wakeLock = null;
+          })
+          .catch(err => {
+            log('Wake Lock release error: ' + err.message, 'warn');
+          });
+      }
+    }
+
     // ===== VISIBILITY CHANGE - CRITICAL FOR BACKGROUND =====
     document.addEventListener('visibilitychange', () => {
       log('Visibility changed: ' + (document.hidden ? 'hidden' : 'visible'));
+      isInBackground = document.hidden;
 
       if (document.hidden) {
-        // Page going to background - ensure audio keeps playing
+        // Page going to background - keep connection alive
+        if (myRoom && isConnected) {
+          log('In room, starting background keep-alive...');
+          startChatKeepAlive();
+        }
+
+        // Keep audio alive for calls
         if (isCallConnected) {
           log('Call active, keeping audio alive in background');
         }
       } else {
         // Page became visible - restore everything
+        isInBackground = false;
+        backgroundKeepAliveActive = false;
+
+        // Stop background-specific heartbeat (regular heartbeat will continue)
+        stopChatKeepAlive();
+
+        // Verify connection is still alive
+        if (myRoom && !isConnected) {
+          log('Reconnecting after visibility change...', 'warn');
+          socket.connect();
+        } else if (myRoom && isConnected) {
+          // Send immediate heartbeat to confirm connection
+          socket.emit('heartbeat');
+          log('Connection verified after returning from background');
+        }
+
+        // Handle audio for calls
         if (remoteAudioEl.srcObject && remoteAudioEl.paused) {
           log('Resuming audio after visibility change...');
           remoteAudioEl.play().catch(e => {
@@ -3998,8 +4575,8 @@
           audioContext.resume().catch(() => { });
         }
 
-        // Re-acquire wake lock if in call
-        if (isCallConnected) {
+        // Re-acquire wake lock if in room or call
+        if (isCallConnected || (myRoom && isConnected)) {
           requestWakeLock();
 
           // Check if WebRTC connection is still healthy
@@ -4011,14 +4588,94 @@
       }
     });
 
+    // ===== BACKGROUND CHAT KEEP-ALIVE =====
+    function startChatKeepAlive() {
+      if (chatKeepAliveInterval) return; // Already running
+
+      backgroundKeepAliveActive = true;
+      log('Starting background chat keep-alive...');
+
+      // Request wake lock to prevent device sleep
+      requestWakeLock();
+
+      // More aggressive heartbeat in background (every 5 seconds)
+      chatKeepAliveInterval = setInterval(() => {
+        if (!myRoom || !isConnected) {
+          stopChatKeepAlive();
+          return;
+        }
+
+        socket.emit('heartbeat');
+
+        // Check if socket is still connected
+        if (!socket.connected) {
+          log('Socket disconnected in background, reconnecting...', 'warn');
+          socket.connect();
+        }
+
+        log('Background heartbeat sent');
+      }, 5000); // Every 5 seconds in background
+
+      // Show persistent notification on Android to keep app alive
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'SHOW_NOTIFICATION',
+              payload: {
+                title: '💬 Connected to ' + myRoom,
+                body: 'Chat is running in background',
+                tag: 'background-chat',
+                data: { roomCode: myRoom }
+              }
+            });
+          }
+        } catch (e) {
+          log('Could not show background notification: ' + e.message, 'warn');
+        }
+      }
+    }
+
+    function stopChatKeepAlive() {
+      if (chatKeepAliveInterval) {
+        clearInterval(chatKeepAliveInterval);
+        chatKeepAliveInterval = null;
+        backgroundKeepAliveActive = false;
+        log('Background chat keep-alive stopped');
+      }
+
+      // Clear background notification
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        try {
+          // Close the background notification
+          navigator.serviceWorker.ready.then(registration => {
+            registration.getNotifications({ tag: 'background-chat' }).then(notifications => {
+              notifications.forEach(n => n.close());
+            });
+          });
+        } catch (e) { }
+      }
+    }
+
     // Handle page freeze/resume (mobile specific - Chrome on Android)
     document.addEventListener('freeze', () => {
       log('Page frozen', 'warn');
-      // The page is being frozen - audio should continue due to silent oscillator
+      // Send a final heartbeat before freeze
+      if (myRoom && socket.connected) {
+        socket.emit('heartbeat');
+      }
     });
 
     document.addEventListener('resume', () => {
       log('Page resumed from freeze');
+
+      // Immediately reconnect if needed
+      if (myRoom && !socket.connected) {
+        log('Reconnecting after page freeze...', 'warn');
+        socket.connect();
+      } else if (myRoom && socket.connected) {
+        socket.emit('heartbeat');
+      }
 
       // Restore audio immediately
       if (remoteAudioEl.srcObject) {
@@ -4031,7 +4688,7 @@
       }
 
       // Re-acquire wake lock
-      if (isCallConnected) {
+      if (isCallConnected || (myRoom && isConnected)) {
         requestWakeLock();
       }
     });

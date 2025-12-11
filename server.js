@@ -505,8 +505,8 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ============ WEBRTC AUDIO CALL ============
-  socket.on('callUser', ({ targetId, offer, callerName }) => {
+  // ============ WEBRTC AUDIO/VIDEO CALL ============
+  socket.on('callUser', ({ targetId, offer, callerName, isVideo }) => {
     try {
       if (!targetId || !offer) {
         socket.emit('callError', { message: 'Invalid call request' });
@@ -519,15 +519,16 @@ io.on('connection', (socket) => {
         return;
       }
 
-      console.log(`📞 ${socket.username} calling ${targetId}`);
+      console.log(`${isVideo ? '📹' : '📞'} ${socket.username} calling ${targetId} (${isVideo ? 'video' : 'audio'})`);
 
-      activeCalls.set(socket.id, { target: targetId, status: 'calling', startTime: Date.now() });
-      activeCalls.set(targetId, { target: socket.id, status: 'ringing', startTime: Date.now() });
+      activeCalls.set(socket.id, { target: targetId, status: 'calling', startTime: Date.now(), isVideo });
+      activeCalls.set(targetId, { target: socket.id, status: 'ringing', startTime: Date.now(), isVideo });
 
       io.to(targetId).emit('incomingCall', {
         callerId: socket.id,
         callerName: callerName || socket.username,
-        offer: offer
+        offer: offer,
+        isVideo: isVideo || false
       });
 
       // Auto-cancel call after 60 seconds if not answered
