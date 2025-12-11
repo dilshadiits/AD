@@ -103,29 +103,32 @@ const io = new Server(server, {
   },
   maxHttpBufferSize: 5e6,
 
-  // Ping settings optimized for unstable networks
-  pingTimeout: 60000,      // Wait 60 seconds before considering connection dead
-  pingInterval: 25000,     // Send ping every 25 seconds
+  // Ping settings optimized for slow/unstable networks
+  pingTimeout: 120000,     // Wait 120 seconds before considering connection dead (slow networks need more time)
+  pingInterval: 10000,     // Send ping every 10 seconds for faster detection
 
   // Connection state recovery - helps restore state after temporary disconnection
   connectionStateRecovery: {
-    maxDisconnectionDuration: 5 * 60 * 1000, // 5 minutes - longer for poor networks
+    maxDisconnectionDuration: 10 * 60 * 1000, // 10 minutes - longer for poor networks
     skipMiddlewares: true,
   },
 
   // Transport settings - polling first for reliability on poor networks
   transports: ['polling', 'websocket'],
   allowUpgrades: true,
-  upgradeTimeout: 30000,   // 30 seconds to upgrade to websocket
+  upgradeTimeout: 60000,   // 60 seconds to upgrade to websocket (slow networks need more time)
 
-  // HTTP long-polling settings
+  // HTTP long-polling settings for better slow network support
   httpCompression: true,
 
-  // Compression settings (disable if causing memory issues)
+  // Compression settings
   perMessageDeflate: false,
 
-  // Allow EIO4 protocol
-  allowEIO3: true
+  // Allow older protocol for compatibility
+  allowEIO3: true,
+
+  // Additional slow network optimizations
+  connectTimeout: 45000,   // 45 seconds to establish initial connection
 });
 
 // ================== SECURITY ==================

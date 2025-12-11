@@ -1753,28 +1753,32 @@
 
     fetchIceServers();
 
-    // ===== SOCKET.IO CONNECTION (Optimized for Low-Quality Networks) =====
+    // ===== SOCKET.IO CONNECTION (Optimized for Slow Networks & Fast Reconnection) =====
     const socket = io({
-      // Reconnection settings - very aggressive for poor networks
+      // Reconnection settings - very aggressive for poor/slow networks
       reconnection: true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 500,        // Start trying quickly
-      reconnectionDelayMax: 3000,    // Don't wait too long between retries
-      randomizationFactor: 0.3,      // Add some randomization
+      reconnectionDelay: 300,        // Start trying VERY quickly (300ms)
+      reconnectionDelayMax: 2000,    // Max 2 seconds between retries
+      randomizationFactor: 0.2,      // Less randomization for faster reconnects
 
-      // Timeout settings - shorter for faster failure detection
-      timeout: 10000,                // 10 second connection timeout
+      // Timeout settings - balanced for slow networks but fast detection
+      timeout: 20000,                // 20 second connection timeout (longer for slow networks)
 
-      // Transport settings - start with polling for reliability
+      // Transport settings - start with polling for reliability on slow networks
       transports: ['polling', 'websocket'],  // Polling first for reliability
       upgrade: true,                          // Try to upgrade to websocket
-      rememberUpgrade: false,                 // Don't remember - always start fresh
+      rememberUpgrade: false,                 // Always start fresh for reliability
 
       // Force new connection on reconnect
       forceNew: false,
 
       // Multiplexing
-      multiplex: true
+      multiplex: true,
+
+      // Additional slow network support
+      autoConnect: true,            // Connect immediately
+      withCredentials: false
     });
 
     // ===== CONNECTION STATUS UI =====
