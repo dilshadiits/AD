@@ -960,7 +960,24 @@ function formatUptime(seconds) {
 
 // Lightweight ping for keep-alive
 app.get('/ping', (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.send('pong');
+});
+
+// Health check endpoint with comprehensive status (for debugging wake-up issues)
+app.get('/health', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const uptime = process.uptime();
+  res.json({
+    status: 'ok',
+    uptime: formatUptime(uptime),
+    uptimeSeconds: Math.floor(uptime),
+    timestamp: new Date().toISOString(),
+    memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+    mongoConnected: mongoConnected,
+    activeRooms: rooms.size,
+    storedRooms: messageStore.size
+  });
 });
 
 // ================== ICE SERVERS ENDPOINT ==================
@@ -1020,9 +1037,10 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // ================== KEEP ALIVE (RENDER) ==================
 // Prevent Render free tier from sleeping by pinging itself
+// Reduced to 4 minutes for more reliable keep-alive
 const keepAlive = () => {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  const interval = 8 * 60 * 1000; // 8 minutes (Render sleeps after 15, use 8 for safety margin)
+  const interval = 4 * 60 * 1000; // 4 minutes (Render sleeps after 15, use 4 for extra safety)
 
   console.log(`⏰ Keep-alive set up for: ${url}`);
 

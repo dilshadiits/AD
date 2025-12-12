@@ -1493,6 +1493,89 @@
       if (debugEl.children.length > 200) debugEl.firstChild.remove();
     }
 
+    // ===== SERVER PRE-WARMING (Wake up sleeping Render server) =====
+    let serverReady = false;
+    let serverWakeupStartTime = 0;
+    let wakeupAttempts = 0;
+    const MAX_WAKEUP_ATTEMPTS = 30; // 30 attempts * 2 seconds = 60 seconds max
+
+    // Helper to show status before showConnectionStatus is defined
+    function showWakeupStatus(message) {
+      // Try to use showConnectionStatus if available
+      if (typeof showConnectionStatus === 'function') {
+        const statusType = message.includes('ready') ? 'connected' :
+          message.includes('unavailable') ? 'disconnected' : 'connecting';
+        showConnectionStatus(statusType, message);
+      } else {
+        // Fallback: update connection-status element directly if it exists
+        const statusEl = document.querySelector('.connection-status');
+        if (statusEl) {
+          statusEl.textContent = message;
+          statusEl.className = 'connection-status show connecting';
+        }
+      }
+    }
+
+    // Pre-warm the server immediately
+    async function prewarmServer() {
+      serverWakeupStartTime = Date.now();
+      log('🔄 Waking up server...');
+
+      const prewarmWithRetry = async () => {
+        if (serverReady) return true;
+
+        wakeupAttempts++;
+        const elapsed = Math.floor((Date.now() - serverWakeupStartTime) / 1000);
+
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+
+          const startTime = performance.now();
+          const response = await fetch('/health', {
+            signal: controller.signal,
+            cache: 'no-store'
+          });
+          clearTimeout(timeout);
+
+          if (response.ok) {
+            const latency = Math.round(performance.now() - startTime);
+            const data = await response.json();
+            serverReady = true;
+            log(`✅ Server ready! (uptime: ${data.uptime}, latency: ${latency}ms)`);
+            showWakeupStatus('Server ready');
+            return true;
+          }
+        } catch (err) {
+          // Server still waking up
+          if (wakeupAttempts < MAX_WAKEUP_ATTEMPTS) {
+            if (elapsed < 10) {
+              showWakeupStatus('⏳ Connecting to server...');
+            } else if (elapsed < 30) {
+              showWakeupStatus(`⏳ Server waking up... (${elapsed}s)`);
+            } else {
+              showWakeupStatus(`⏳ Still waking up... (${elapsed}s)`);
+            }
+
+            // Retry with exponential backoff (max 3 seconds)
+            const delay = Math.min(1000 + (wakeupAttempts * 200), 3000);
+            await new Promise(r => setTimeout(r, delay));
+            return prewarmWithRetry();
+          } else {
+            log('❌ Server wake-up timeout', 'err');
+            showWakeupStatus('Server unavailable. Try refreshing.');
+            return false;
+          }
+        }
+        return false;
+      };
+
+      return prewarmWithRetry();
+    }
+
+    // Start pre-warming immediately (uses fallback status display)
+    prewarmServer();
+
     // ===== STATE =====
     let myName = '';
     let myRoom = '';
@@ -1819,12 +1902,12 @@
     });
 
     // ===== KEEP-ALIVE PING =====
-    // Periodically fetch strict HTTP endpoint to keep server awake
+    // Periodically fetch HTTP endpoint to keep server awake (more aggressive)
     setInterval(() => {
       if (isOnline) {
-        fetch('/ping').catch(() => { });
+        fetch('/ping', { cache: 'no-store' }).catch(() => { });
       }
-    }, 5 * 60 * 1000); // Pulse every 5 minutes
+    }, 3 * 60 * 1000); // Pulse every 3 minutes
 
     socket.on('disconnect', (reason) => {
       isConnected = false;
