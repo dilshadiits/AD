@@ -174,9 +174,18 @@ async function createUserIndex() {
   }
 }
 
-// Initialize MongoDB connection
-connectMongoDB().then(() => {
-  createUserIndex();
+// Initialize MongoDB connection in background (non-blocking startup)
+// Server starts immediately, DB connects in parallel for faster cold starts
+let mongoInitPromise = null;
+setImmediate(async () => {
+  try {
+    mongoInitPromise = connectMongoDB();
+    await mongoInitPromise;
+    await createUserIndex();
+    console.log('✅ Background MongoDB initialization complete');
+  } catch (err) {
+    console.error('❌ Background MongoDB init failed:', err.message);
+  }
 });
 
 const app = express();
@@ -264,7 +273,6 @@ const MAX_USERS_PER_ROOM = 50;
 const rooms = new Map();
 const messageStore = new Map();
 const activeCalls = new Map();
-const userSessions = new Map(); // Track user sessions for reconnection
 
 // ================== MESSAGE PERSISTENCE ==================
 const MESSAGES_FILE = path.join(__dirname, 'messages.json');
@@ -287,13 +295,12 @@ function saveMessages() {
   }
 }
 
-// Load messages from file
+// Load messages from file (sync - fallback)
 function loadMessages() {
   try {
     if (fs.existsSync(MESSAGES_FILE)) {
       const data = JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'));
       for (const [room, messages] of Object.entries(data)) {
-        // Convert Array back to Set for seenBy
         const restoredMessages = messages.map(msg => ({
           ...msg,
           seenBy: new Set(msg.seenBy || [])
@@ -307,8 +314,34 @@ function loadMessages() {
   }
 }
 
-// Load messages on startup
-loadMessages();
+// Async message loading (non-blocking startup)
+let messagesLoaded = false;
+async function loadMessagesAsync() {
+  try {
+    const { readFile } = require('fs').promises;
+    if (fs.existsSync(MESSAGES_FILE)) {
+      const fileContent = await readFile(MESSAGES_FILE, 'utf8');
+      const data = JSON.parse(fileContent);
+      for (const [room, messages] of Object.entries(data)) {
+        const restoredMessages = messages.map(msg => ({
+          ...msg,
+          seenBy: new Set(msg.seenBy || [])
+        }));
+        messageStore.set(room, restoredMessages);
+      }
+      console.log(`📂 Messages loaded async (${Object.keys(data).length} rooms)`);
+    }
+    messagesLoaded = true;
+  } catch (err) {
+    console.error('Failed to load messages async:', err.message);
+    // Fallback to sync loading
+    loadMessages();
+    messagesLoaded = true;
+  }
+}
+
+// Load messages asynchronously (non-blocking startup)
+setImmediate(() => loadMessagesAsync());
 
 // Auto-save messages every 30 seconds
 setInterval(saveMessages, 30000);
@@ -1095,6 +1128,12 @@ function formatUptime(seconds) {
   return `${d}d ${h}h ${m}m ${s}s`;
 }
 
+// Ultra-fast startup check - returns immediately, no dependencies
+// Use this for Render health checks for faster cold starts
+app.get('/ready', (req, res) => {
+  res.status(200).send('ready');
+});
+
 // Lightweight ping for keep-alive
 app.get('/ping', (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -1187,38 +1226,48 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // ================== KEEP ALIVE (RENDER) ==================
 // Prevent Render free tier from sleeping by pinging itself
-// Reduced to 4 minutes for more reliable keep-alive
+// Enhanced with HTTPS support and retry logic
+const https = require('https');
+
 const keepAlive = () => {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   const interval = 4 * 60 * 1000; // 4 minutes (Render sleeps after 15, use 4 for extra safety)
+  const isHttps = url.startsWith('https://');
+  const httpModule = isHttps ? https : http;
 
-  console.log(`⏰ Keep-alive set up for: ${url}`);
+  console.log(`⏰ Keep-alive set up for: ${url} (using ${isHttps ? 'HTTPS' : 'HTTP'})`);
 
-  // Periodic self-ping
-  setInterval(() => {
+  // Ping function with retry logic
+  const ping = (retryCount = 0) => {
     const pingUrl = `${url}/ping`;
-    http.get(pingUrl, (res) => {
+    const maxRetries = 2;
+
+    httpModule.get(pingUrl, (res) => {
       if (res.statusCode === 200) {
         console.log(`⚡ Keep-alive ping successful (${new Date().toLocaleTimeString()})`);
       } else {
-        console.error(`⚠️ Keep-alive ping failed: ${res.statusCode} (${new Date().toLocaleTimeString()})`);
+        console.error(`⚠️ Keep-alive ping failed: ${res.statusCode}`);
+        if (retryCount < maxRetries) {
+          setTimeout(() => ping(retryCount + 1), 5000);
+        }
       }
     }).on('error', (err) => {
-      console.error(`⚠️ Keep-alive ping error (${new Date().toLocaleTimeString()}):`, err.message);
+      console.error(`⚠️ Keep-alive ping error: ${err.message}`);
+      if (retryCount < maxRetries) {
+        console.log(`🔄 Retrying ping (${retryCount + 1}/${maxRetries})...`);
+        setTimeout(() => ping(retryCount + 1), 5000);
+      }
     });
-  }, interval);
+  };
 
-  // Send first ping immediately to test connectivity
-  console.log('🔍 Testing keep-alive connectivity...');
-  http.get(`${url}/ping`, (res) => {
-    if (res.statusCode === 200) {
-      console.log('✅ Keep-alive test successful - service will stay awake');
-    } else {
-      console.error(`⚠️ Keep-alive test failed with status: ${res.statusCode}`);
-    }
-  }).on('error', (err) => {
-    console.error('❌ Keep-alive test failed. Check RENDER_EXTERNAL_URL:', err.message);
-  });
+  // Periodic self-ping
+  setInterval(() => ping(), interval);
+
+  // Send first ping after a short delay to ensure server is ready
+  setTimeout(() => {
+    console.log('🔍 Testing keep-alive connectivity...');
+    ping();
+  }, 2000);
 };
 
 // ================== GRACEFUL SHUTDOWN ==================
