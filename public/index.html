@@ -3174,6 +3174,8 @@
 
       const config = {
         iceServers: iceServers.iceServers,
+        // Support 'relay' mode for restrictive networks (forces TURN usage)
+        iceTransportPolicy: iceServers.iceTransportPolicy || 'all',
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
         sdpSemantics: 'unified-plan',

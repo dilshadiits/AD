@@ -103,8 +103,81 @@ async function saveMessageToMongoDB(roomCode, message) {
   }
 }
 
+// ================== USER LAST SEEN PERSISTENCE (SPECIAL ROOM) ==================
+// Save/update user last seen to MongoDB
+async function saveUserLastSeenToMongoDB(roomCode, username, lastSeen, online = false) {
+  if (!mongoConnected || !usesMongoDB(roomCode)) return false;
+
+  const normalizedRoom = normalizeRoomCode(roomCode);
+  const normalizedUsername = username.toLowerCase();
+
+  try {
+    await mongoDb.collection('users').updateOne(
+      { roomCode: normalizedRoom, usernameKey: normalizedUsername },
+      {
+        $set: {
+          roomCode: normalizedRoom,
+          usernameKey: normalizedUsername,
+          username: username,
+          lastSeen: new Date(lastSeen),
+          online: online,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('❌ MongoDB user save error:', err.message);
+    return false;
+  }
+}
+
+// Get all users with last seen info from MongoDB (for special room)
+async function getUsersFromMongoDB(roomCode) {
+  if (!mongoConnected || !usesMongoDB(roomCode)) return [];
+
+  const normalizedRoom = normalizeRoomCode(roomCode);
+
+  try {
+    const users = await mongoDb.collection('users')
+      .find({ roomCode: normalizedRoom })
+      .sort({ lastSeen: -1 })
+      .toArray();
+
+    return users.map(u => ({
+      username: u.username,
+      lastSeen: u.lastSeen instanceof Date ? u.lastSeen.getTime() : u.lastSeen,
+      online: false, // MongoDB users are historical, not currently online
+      fromMongoDB: true
+    }));
+  } catch (err) {
+    console.error('MongoDB users load error:', err.message);
+    return [];
+  }
+}
+
+// Create index for users collection
+async function createUserIndex() {
+  if (!mongoConnected) return;
+  try {
+    await mongoDb.collection('users').createIndex(
+      { roomCode: 1, usernameKey: 1 },
+      { unique: true }
+    );
+    console.log('✅ MongoDB users index created');
+  } catch (err) {
+    // Index might already exist
+    if (!err.message.includes('already exists')) {
+      console.error('MongoDB users index error:', err.message);
+    }
+  }
+}
+
 // Initialize MongoDB connection
-connectMongoDB();
+connectMongoDB().then(() => {
+  createUserIndex();
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -255,6 +328,35 @@ function getUsers(room) {
   }));
 }
 
+// Enhanced getUsers that includes MongoDB stored users for special room
+async function getUsersWithHistory(room) {
+  const currentUsers = getUsers(room);
+
+  // For special room, merge with historical users from MongoDB
+  if (usesMongoDB(room)) {
+    const mongoUsers = await getUsersFromMongoDB(room);
+
+    // Create a map of current users by lowercase username
+    const currentUsernames = new Set(
+      currentUsers.map(u => u.username.toLowerCase())
+    );
+
+    // Add MongoDB users that are not currently online
+    mongoUsers.forEach(mongoUser => {
+      if (!currentUsernames.has(mongoUser.username.toLowerCase())) {
+        currentUsers.push({
+          socketId: null,
+          username: mongoUser.username,
+          online: false,
+          lastSeen: mongoUser.lastSeen
+        });
+      }
+    });
+  }
+
+  return currentUsers;
+}
+
 function sanitize(str) {
   if (typeof str !== 'string') return '';
   return str.replace(/[<>&"']/g, (char) => {
@@ -271,9 +373,6 @@ function getTimestamp() {
   return new Date().toISOString();
 }
 
-function formatTime(isoString) {
-  return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 // Clean up stale rooms periodically (but preserve messages!)
 setInterval(() => {
@@ -318,7 +417,15 @@ io.on('connection', (socket) => {
           userData.online = true;
           userData.lastSeen = Date.now();
         }
-        io.to(socket.roomCode).emit('userList', getUsers(socket.roomCode));
+        // Emit enhanced user list for special room
+        if (usesMongoDB(socket.roomCode)) {
+          saveUserLastSeenToMongoDB(socket.roomCode, socket.username, Date.now(), true);
+          getUsersWithHistory(socket.roomCode).then(users => {
+            io.to(socket.roomCode).emit('userList', users);
+          });
+        } else {
+          io.to(socket.roomCode).emit('userList', getUsers(socket.roomCode));
+        }
       }
     }
   }
@@ -448,7 +555,16 @@ io.on('connection', (socket) => {
       }
 
       socket.to(room).emit('userJoined', { username: name, socketId: socket.id });
-      io.to(room).emit('userList', getUsers(room));
+
+      // For special room, save user info to MongoDB and emit enhanced user list
+      if (usesMongoDB(room)) {
+        saveUserLastSeenToMongoDB(room, name, Date.now(), true);
+        getUsersWithHistory(room).then(users => {
+          io.to(room).emit('userList', users);
+        });
+      } else {
+        io.to(room).emit('userList', getUsers(room));
+      }
 
     } catch (err) {
       console.error('Join error:', err);
@@ -809,7 +925,15 @@ io.on('connection', (socket) => {
             sessionId
           });
 
-          io.to(roomCode).emit('userList', getUsers(roomCode));
+          // Emit enhanced user list for special room
+          if (usesMongoDB(roomCode)) {
+            saveUserLastSeenToMongoDB(roomCode, username, Date.now(), true);
+            getUsersWithHistory(roomCode).then(users => {
+              io.to(roomCode).emit('userList', users);
+            });
+          } else {
+            io.to(roomCode).emit('userList', getUsers(roomCode));
+          }
           console.log(`🔄 ${username} rejoined room: ${roomCode}`);
           return;
         }
@@ -871,12 +995,25 @@ io.on('connection', (socket) => {
           userData.online = false;
           userData.lastSeen = Date.now();
 
+          // Save last seen to MongoDB for special room
+          if (usesMongoDB(socket.roomCode)) {
+            saveUserLastSeenToMongoDB(socket.roomCode, socket.username, userData.lastSeen, false);
+          }
+
           // Notify others
           socket.to(socket.roomCode).emit('userOffline', {
             username: socket.username,
             socketId: socket.id
           });
-          io.to(socket.roomCode).emit('userList', getUsers(socket.roomCode));
+
+          // Emit enhanced user list for special room
+          if (usesMongoDB(socket.roomCode)) {
+            getUsersWithHistory(socket.roomCode).then(users => {
+              io.to(socket.roomCode).emit('userList', users);
+            });
+          } else {
+            io.to(socket.roomCode).emit('userList', getUsers(socket.roomCode));
+          }
         }
 
         // Clean up empty rooms after a delay (but keep messages!)
@@ -964,65 +1101,78 @@ app.get('/ping', (req, res) => {
   res.send('pong');
 });
 
-// Health check endpoint with comprehensive status (for debugging wake-up issues)
-app.get('/health', (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  const uptime = process.uptime();
-  res.json({
-    status: 'ok',
-    uptime: formatUptime(uptime),
-    uptimeSeconds: Math.floor(uptime),
-    timestamp: new Date().toISOString(),
-    memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
-    mongoConnected: mongoConnected,
-    activeRooms: rooms.size,
-    storedRooms: messageStore.size
-  });
-});
 
 // ================== ICE SERVERS ENDPOINT ==================
 app.get('/api/ice-servers', (req, res) => {
-  // Return ICE server configuration
-  // In production, you might want to generate time-limited credentials
+  // Return ICE server configuration with emphasis on TURN servers for restrictive networks
+  // Priority: TURNS (TLS/443) > TURN (TCP/443) > TURN (UDP) > STUN
   res.json({
     iceServers: [
-      // Google STUN servers (reliable)
+      // Google STUN servers (for simple NAT traversal)
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
-      // Other free STUN servers
-      { urls: 'stun:global.stun.twilio.com:3478' },
-      { urls: 'stun:stun.framasoft.org:3478' },
-      // Free TURN servers (for NAT traversal)
+
+      // ===== METERED TURN SERVERS (Most Reliable) =====
+      // These work on most restrictive networks - prioritize TCP/443 and TURNS
       {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      // Additional free TURN servers for redundancy
-      {
-        urls: 'turn:relay.metered.ca:80',
+        urls: [
+          'turn:a.relay.metered.ca:443',
+          'turn:a.relay.metered.ca:443?transport=tcp',
+          'turns:a.relay.metered.ca:443?transport=tcp'
+        ],
         username: 'e8dd65f92c95c6bf4bf1',
         credential: 'DQpDQkhS3f/L4bsi'
       },
       {
-        urls: 'turn:relay.metered.ca:443',
+        urls: [
+          'turn:b.relay.metered.ca:443',
+          'turn:b.relay.metered.ca:443?transport=tcp',
+          'turns:b.relay.metered.ca:443?transport=tcp'
+        ],
         username: 'e8dd65f92c95c6bf4bf1',
         credential: 'DQpDQkhS3f/L4bsi'
+      },
+      // Additional metered servers on different ports
+      {
+        urls: [
+          'turn:a.relay.metered.ca:80',
+          'turn:a.relay.metered.ca:80?transport=tcp'
+        ],
+        username: 'e8dd65f92c95c6bf4bf1',
+        credential: 'DQpDQkhS3f/L4bsi'
+      },
+
+      // ===== OPEN RELAY SERVERS (Backup) =====
+      {
+        urls: [
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+          'turns:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp'
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+
+      // ===== ADDITIONAL FREE TURN SERVERS =====
+      // Xirsys free tier (TCP on 443 for restrictive networks)
+      {
+        urls: [
+          'turn:turn.anyfirewall.com:443?transport=tcp'
+        ],
+        username: 'webrtc',
+        credential: 'webrtc'
       }
-    ]
+    ],
+    // ICE transport policy - can be set to 'relay' to force TURN usage for testing
+    iceTransportPolicy: 'all'
   });
 });
 
