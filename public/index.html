@@ -28,6 +28,55 @@
       padding: 0;
     }
 
+    /* Screenshot Prevention - Disable text selection */
+    body,
+    .messages,
+    .msg,
+    .chat-input,
+    .modal,
+    * {
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
+      user-select: none !important;
+      -webkit-touch-callout: none !important;
+    }
+
+    /* Allow text selection in input fields */
+    input,
+    textarea {
+      -webkit-user-select: text !important;
+      -moz-user-select: text !important;
+      -ms-user-select: text !important;
+      user-select: text !important;
+    }
+
+    /* Hide content when page loses visibility (screen recording/screenshot detection) */
+    body.screenshot-detected {
+      filter: blur(50px) !important;
+      pointer-events: none !important;
+    }
+
+    body.screenshot-detected::before {
+      content: 'Screenshot Protection Active';
+      position: fixed;
+      inset: 0;
+      background: var(--bg-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: var(--primary);
+      z-index: 99999;
+    }
+
+    /* Print protection */
+    @media print {
+      body {
+        display: none !important;
+      }
+    }
+
     :root {
       --primary: #e94560;
       --primary-light: #ff6b6b;
@@ -2407,7 +2456,23 @@
 
     function formatTimestamp(timestamp) {
       try {
-        return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const date = new Date(timestamp);
+        const now = new Date();
+        const isToday = date.toDateString() === now.toDateString();
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const isYesterday = date.toDateString() === yesterday.toDateString();
+
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        if (isToday) {
+          return timeStr;
+        } else if (isYesterday) {
+          return 'Yesterday, ' + timeStr;
+        } else {
+          const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          return dateStr + ', ' + timeStr;
+        }
       } catch {
         return timestamp;
       }
@@ -2755,11 +2820,28 @@
           div.appendChild(btnContainer);
         } else if (!isOnline && u.lastSeen) {
           const date = new Date(u.lastSeen);
+          const now = new Date();
+          const isToday = date.toDateString() === now.toDateString();
+          const yesterday = new Date(now);
+          yesterday.setDate(yesterday.getDate() - 1);
+          const isYesterday = date.toDateString() === yesterday.toDateString();
+
           const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          let lastSeenStr;
+
+          if (isToday) {
+            lastSeenStr = timeStr;
+          } else if (isYesterday) {
+            lastSeenStr = 'Yesterday, ' + timeStr;
+          } else {
+            const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            lastSeenStr = dateStr + ', ' + timeStr;
+          }
+
           const span = document.createElement('span');
           span.style.fontSize = '12px';
           span.style.color = 'var(--text-muted)';
-          span.textContent = timeStr;
+          span.textContent = lastSeenStr;
           div.appendChild(span);
         }
         list.appendChild(div);
@@ -4340,12 +4422,12 @@
     }
 
     function clearCallNotification() {
-      if ('serviceWorker' in navigator && navigator.serviceWorker.registration) {
-        navigator.serviceWorker.registration.then(reg => {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
+        navigator.serviceWorker.ready.then(reg => {
           reg.getNotifications({ tag: 'ongoing-call' }).then(notifications => {
             notifications.forEach(n => n.close());
           });
-        });
+        }).catch(() => { });
       }
     }
 
@@ -5137,6 +5219,73 @@
     window.addEventListener('beforeunload', () => {
       if (pc) cleanupCall();
     });
+
+    // ===== SCREENSHOT PREVENTION =====
+    (function () {
+      // Detect PrintScreen key press
+      document.addEventListener('keydown', function (e) {
+        // PrintScreen key (code 44), Windows+PrintScreen, Alt+PrintScreen
+        if (e.key === 'PrintScreen' || e.keyCode === 44) {
+          e.preventDefault();
+          document.body.classList.add('screenshot-detected');
+          navigator.clipboard.writeText('').catch(() => { });
+          setTimeout(() => {
+            document.body.classList.remove('screenshot-detected');
+          }, 2000);
+          return false;
+        }
+        // Detect Ctrl+P (Print)
+        if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) {
+          e.preventDefault();
+          return false;
+        }
+        // Detect Ctrl+Shift+S (Windows Snipping Tool shortcut) and Win+Shift+S
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+          e.preventDefault();
+          document.body.classList.add('screenshot-detected');
+          setTimeout(() => {
+            document.body.classList.remove('screenshot-detected');
+          }, 2000);
+          return false;
+        }
+      }, true);
+
+      // Disable right-click context menu
+      document.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        return false;
+      });
+
+      // Visibility change detection (screen recording, screenshot apps)
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) {
+          document.body.classList.add('screenshot-detected');
+        } else {
+          setTimeout(() => {
+            document.body.classList.remove('screenshot-detected');
+          }, 500);
+        }
+      });
+
+      // Blur when window loses focus (potential screenshot in progress)
+      window.addEventListener('blur', function () {
+        document.body.classList.add('screenshot-detected');
+      });
+
+      window.addEventListener('focus', function () {
+        setTimeout(() => {
+          document.body.classList.remove('screenshot-detected');
+        }, 300);
+      });
+
+      // Prevent dragging images
+      document.addEventListener('dragstart', function (e) {
+        if (e.target.nodeName === 'IMG') {
+          e.preventDefault();
+          return false;
+        }
+      });
+    })();
   </script>
 </body>
 
