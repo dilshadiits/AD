@@ -1,7 +1,7 @@
 {
   "name": "Private Chat",
   "short_name": "Chat",
-  "description": "Private chat with secure, low-bandwidth audio calls",
+  "description": "Private chat with secure audio and video calls",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -46,7 +46,9 @@
     "microphone": [
       "self"
     ],
-    "camera": [],
+    "camera": [
+      "self"
+    ],
     "geolocation": []
   }
 }

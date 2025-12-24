@@ -1,9 +1,12 @@
 // Service Worker for Private Chat
 // Handles caching, offline support, and push notifications
 
-const CACHE_NAME = 'private-chat-v25';
-const STATIC_CACHE = 'private-chat-static-v25';
-const DYNAMIC_CACHE = 'private-chat-dynamic-v25';
+const CACHE_NAME = 'private-chat-v28';
+const STATIC_CACHE = 'private-chat-static-v28';
+const DYNAMIC_CACHE = 'private-chat-dynamic-v28';
+
+
+
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = [
@@ -178,7 +181,7 @@ self.addEventListener('push', (event) => {
     title: 'Private Chat',
     body: 'New message received',
     icon: '/icon-192.png',
-    badge: '/badge-72.png',
+    badge: '/icon-192.png',
     tag: 'chat-notification',
     url: '/'
   };
@@ -197,7 +200,7 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body,
     icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/badge-72.png',
+    badge: data.badge || '/icon-192.png',
     vibrate: [100, 50, 100, 50, 100],
     tag: data.tag || 'chat-notification',
     renotify: true,
@@ -335,7 +338,7 @@ self.addEventListener('message', (event) => {
           self.registration.showNotification(payload.title || 'Private Chat', {
             body: payload.body,
             icon: payload.icon || '/icon-192.png',
-            badge: '/badge-72.png',
+            badge: '/icon-192.png',
             tag: payload.tag || 'local-notification',
             data: payload.data
           })

@@ -18,8 +18,9 @@
   <link rel="manifest" href="/manifest.json">
 
   <!-- Icons -->
-  <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png">
+
 
   <style>
     * {
@@ -1827,17 +1828,38 @@
     }, 30000);
 
     // ===== FETCH ICE SERVERS =====
+    // Check if forceRelay mode is enabled via URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceRelayMode = urlParams.get('forceRelay') === 'true';
+
+    if (forceRelayMode) {
+      log('⚠️ Force RELAY mode enabled - only using TURN servers (no direct connections)');
+    }
+
     async function fetchIceServers() {
       try {
-        const response = await fetch('/api/ice-servers');
+        // Pass forceRelay to server if enabled
+        const url = forceRelayMode ? '/api/ice-servers?forceRelay=true' : '/api/ice-servers';
+        const response = await fetch(url);
         const data = await response.json();
         iceServers = data;
-        log('ICE servers loaded: ' + data.iceServers.length + ' servers');
+
+        // Log useful info about TURN servers
+        const turnCount = data.iceServers.filter(s =>
+          (Array.isArray(s.urls) ? s.urls.some(u => u.startsWith('turn')) : s.urls?.startsWith('turn'))
+        ).length;
+        log('ICE servers loaded: ' + data.iceServers.length + ' total, ' + turnCount + ' TURN servers');
+        log('ICE transport policy: ' + data.iceTransportPolicy);
+
+        if (data.iceTransportPolicy === 'relay') {
+          log('⚠️ RELAY ONLY mode - all traffic will go through TURN servers');
+        }
       } catch (err) {
         log('Failed to fetch ICE servers, using defaults', 'warn');
         iceServers = getDefaultIceServers();
       }
     }
+
 
     function getDefaultIceServers() {
       return {
@@ -1847,41 +1869,38 @@
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
           { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          // Other free STUN servers
+          // Twilio STUN
           { urls: 'stun:global.stun.twilio.com:3478' },
-          { urls: 'stun:stun.framasoft.org:3478' },
-          // Free TURN servers (for NAT traversal)
+          // FreeTURN.net (Free, working as of 2024)
           {
-            urls: 'turn:openrelay.metered.ca:80',
+            urls: ['turn:freestun.net:3478', 'turn:freestun.net:5349', 'turns:freestun.net:5349'],
+            username: 'free',
+            credential: 'free'
+          },
+          // Open Relay Project (Metered.ca free tier)
+          {
+            urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
             username: 'openrelayproject',
             credential: 'openrelayproject'
           },
+          // Metered TURN Servers
           {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          // Additional free TURN servers for redundancy
-          {
-            urls: 'turn:relay.metered.ca:80',
+            urls: ['turn:a.relay.metered.ca:80', 'turn:a.relay.metered.ca:443', 'turns:a.relay.metered.ca:443?transport=tcp'],
             username: 'e8dd65f92c95c6bf4bf1',
             credential: 'DQpDQkhS3f/L4bsi'
           },
+          // Numb TURN (public free server)
           {
-            urls: 'turn:relay.metered.ca:443',
-            username: 'e8dd65f92c95c6bf4bf1',
-            credential: 'DQpDQkhS3f/L4bsi'
+            urls: 'turn:numb.viagenie.ca',
+            username: 'webrtc@live.com',
+            credential: 'muazkh'
           }
-        ]
-        // NOTE: iceCandidatePoolSize is set in createPC, not here
+        ],
+        iceTransportPolicy: forceRelayMode ? 'relay' : 'all',
+        iceCandidatePoolSize: 4
       };
     }
+
 
     fetchIceServers();
 
@@ -2273,36 +2292,49 @@
     });
 
     socket.on('callAnswered', async (data) => {
-      log('Call answered, setting remote description...');
+      log('✅ Call answered by remote peer, setting remote description...');
+      log('Current signaling state: ' + (pc ? pc.signalingState : 'no PC'));
+      log('Queued ICE candidates waiting: ' + iceQueue.length);
+
       if (pc && pc.signalingState !== 'closed') {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
           remoteDescriptionSet = true;
-          log('Remote description set successfully');
+          log('Remote description set successfully. Signaling state now: ' + pc.signalingState);
+          log('Processing ' + iceQueue.length + ' queued ICE candidates...');
           processIceQueue();
         } catch (e) {
-          log('Error setting remote description: ' + e.message, 'err');
+          log('Error setting remote description: ' + e.message + ' | signaling state: ' + pc.signalingState, 'err');
         }
+      } else {
+        log('Cannot set remote description - PC is ' + (pc ? 'closed' : 'null'), 'err');
       }
     });
 
     socket.on('iceCandidate', (data) => {
-      log('Received ICE candidate from ' + data.from);
+      // Parse candidate type for better logging
+      const candidateStr = data.candidate?.candidate || '';
+      const candidateType = candidateStr.includes('typ host') ? 'host' :
+        candidateStr.includes('typ srflx') ? 'srflx' :
+          candidateStr.includes('typ relay') ? 'relay' : 'prflx';
+
+      log('Received ICE candidate (' + candidateType + ') from ' + data.from);
 
       if (!pc || pc.signalingState === 'closed') {
-        log('PC not ready, queueing ICE candidate');
+        log('PC not ready (state: ' + (pc ? pc.signalingState : 'null') + '), queueing ' + candidateType + ' candidate', 'warn');
         iceQueue.push(data.candidate);
         return;
       }
 
       if (!remoteDescriptionSet) {
-        log('Remote description not set, queueing ICE candidate');
+        log('Remote description not set yet, queueing ' + candidateType + ' candidate (queue size: ' + (iceQueue.length + 1) + ')');
         iceQueue.push(data.candidate);
         return;
       }
 
       addIceCandidate(data.candidate);
     });
+
 
     socket.on('callEnded', (data) => {
       log('Call ended by ' + (data.username || 'remote'));
@@ -2425,10 +2457,11 @@
       }
     }
 
-    // Initialize audio context on any user interaction
+    // Initialize audio context on first user interaction only (once: true removes listeners after first call)
     ['click', 'touchstart', 'touchend'].forEach(event => {
-      document.addEventListener(event, () => initAudioContext(), { once: false, passive: true });
+      document.addEventListener(event, () => initAudioContext(), { once: true, passive: true });
     });
+
 
     // ===== SCROLL HANDLING =====
     messagesEl.addEventListener('scroll', () => {
@@ -3341,29 +3374,44 @@
 
       pc.onicecandidate = (event) => {
         if (event.candidate && callTarget) {
-          log('Sending ICE candidate: ' + event.candidate.candidate.slice(0, 50));
+          // Log detailed candidate info for debugging
+          const candidateStr = event.candidate.candidate;
+          const candidateType = candidateStr.includes('typ host') ? 'host' :
+            candidateStr.includes('typ srflx') ? 'srflx' :
+              candidateStr.includes('typ relay') ? 'relay' : 'prflx';
+          log('Sending ICE candidate (' + candidateType + '): ' + candidateStr.slice(0, 60));
+
           socket.emit('iceCandidate', {
             targetId: callTarget,
             candidate: event.candidate
           });
         } else if (!event.candidate) {
-          log('ICE gathering complete');
+          log('ICE gathering complete - all candidates sent');
         }
       };
 
       pc.oniceconnectionstatechange = () => {
-        log('ICE state: ' + pc.iceConnectionState);
+        log('ICE connection state: ' + pc.iceConnectionState + ' | gathering: ' + pc.iceGatheringState);
         updateAudioDebug();
 
         switch (pc.iceConnectionState) {
+          case 'new':
+            log('ICE connection initialized, waiting for candidates...');
+            break;
           case 'checking':
             updateCallStatus('Connecting...');
+            log('ICE checking - verifying network path...');
             // Set a timeout - if we're still checking after 30 seconds, something is wrong
             if (!window.iceCheckingTimeout) {
               window.iceCheckingTimeout = setTimeout(() => {
                 if (pc && pc.iceConnectionState === 'checking') {
-                  log('ICE connection timeout - stuck in checking state', 'err');
-                  updateCallStatus('Connection failed - retrying...');
+                  log('ICE connection timeout - stuck in checking state. This usually means TURN servers are needed or blocked.', 'err');
+                  updateCallStatus('Connection failed - retrying with TURN...');
+
+                  // Log current ICE gathering state for debugging
+                  log('ICE gathering state at timeout: ' + pc.iceGatheringState);
+
+                  // Try ICE restart which will re-gather candidates
                   pc.restartIce();
                 }
               }, 30000);
@@ -3376,15 +3424,16 @@
               clearTimeout(window.iceCheckingTimeout);
               window.iceCheckingTimeout = null;
             }
+            log('ICE connection established! State: ' + pc.iceConnectionState);
             setCallConnected();
             break;
           case 'failed':
-            log('ICE failed, restarting...', 'warn');
+            log('ICE failed - all connection attempts exhausted. Will try ICE restart...', 'err');
             updateCallStatus('Reconnecting...');
             pc.restartIce();
             break;
           case 'disconnected':
-            log('Connection interrupted, attempting auto-reconnect...');
+            log('ICE connection interrupted, attempting auto-reconnect...');
             updateCallStatus('Reconnecting...');
 
             // Try automatic recovery by restarting ICE immediately
@@ -3397,6 +3446,9 @@
                 document.getElementById('reconnectBtn').style.display = 'block';
               }
             }, 3000);
+            break;
+          case 'closed':
+            log('ICE connection closed');
             break;
         }
       };
@@ -3434,6 +3486,11 @@
 
       pc.onicegatheringstatechange = () => {
         log('ICE gathering state: ' + pc.iceGatheringState);
+        if (pc.iceGatheringState === 'complete') {
+          log('ICE gathering complete - found all possible connection candidates');
+        } else if (pc.iceGatheringState === 'gathering') {
+          log('ICE gathering in progress - discovering network paths...');
+        }
       };
     }
 
@@ -3754,9 +3811,18 @@
         return;
       }
 
+      // Parse candidate type for logging
+      const candidateStr = candidate.candidate || '';
+      const candidateType = candidateStr.includes('typ host') ? 'host' :
+        candidateStr.includes('typ srflx') ? 'srflx' :
+          candidateStr.includes('typ relay') ? 'relay' : 'prflx';
+
       pc.addIceCandidate(new RTCIceCandidate(candidate))
-        .then(() => log('ICE candidate added successfully'))
-        .catch(e => log('ICE candidate error: ' + e.message, 'err'));
+        .then(() => log('ICE candidate added (' + candidateType + ')' + (candidateType === 'relay' ? ' - TURN relay working!' : '')))
+        .catch(e => {
+          // Log more details for debugging
+          log('ICE candidate error: ' + e.message + ' | type: ' + candidateType + ' | state: ' + pc.signalingState, 'err');
+        });
     }
 
     function processIceQueue() {
@@ -4650,9 +4716,19 @@
     function cleanupCall() {
       log('Cleaning up call...');
 
-      stopCallTimer();
-      stopStatsMonitoring();
-      stopKeepAlive();
+      // Wrap in try-catch to ensure cleanup completes even if something fails
+      try {
+        stopCallTimer();
+      } catch (e) { log('Error stopping call timer: ' + e.message, 'warn'); }
+
+      try {
+        stopStatsMonitoring();
+      } catch (e) { log('Error stopping stats monitoring: ' + e.message, 'warn'); }
+
+      try {
+        stopKeepAlive();
+      } catch (e) { log('Error stopping keep-alive: ' + e.message, 'warn'); }
+
 
       // Clear ICE checking timeout
       if (window.iceCheckingTimeout) {
@@ -4660,28 +4736,39 @@
         window.iceCheckingTimeout = null;
       }
 
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          track.stop();
-          log('Stopped local track: ' + track.kind);
-        });
-        localStream = null;
-      }
+      // Stop local media tracks
+      try {
+        if (localStream) {
+          localStream.getTracks().forEach(track => {
+            track.stop();
+            log('Stopped local track: ' + track.kind);
+          });
+          localStream = null;
+        }
+      } catch (e) { log('Error stopping local stream: ' + e.message, 'warn'); }
 
-      if (remoteStream) {
-        remoteStream.getTracks().forEach(track => track.stop());
-        remoteStream = null;
-      }
+      // Stop remote media tracks
+      try {
+        if (remoteStream) {
+          remoteStream.getTracks().forEach(track => track.stop());
+          remoteStream = null;
+        }
+      } catch (e) { log('Error stopping remote stream: ' + e.message, 'warn'); }
 
-      if (pc) {
-        pc.ontrack = null;
-        pc.onicecandidate = null;
-        pc.oniceconnectionstatechange = null;
-        pc.onconnectionstatechange = null;
-        pc.onsignalingstatechange = null;
-        pc.close();
-        pc = null;
-      }
+      // Close peer connection
+      try {
+        if (pc) {
+          pc.ontrack = null;
+          pc.onicecandidate = null;
+          pc.oniceconnectionstatechange = null;
+          pc.onconnectionstatechange = null;
+          pc.onsignalingstatechange = null;
+          pc.onicegatheringstatechange = null;
+          pc.close();
+          pc = null;
+        }
+      } catch (e) { log('Error closing peer connection: ' + e.message, 'warn'); }
+
 
       // Clear audio elements
       remoteAudioEl.srcObject = null;

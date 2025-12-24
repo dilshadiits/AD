@@ -277,8 +277,13 @@ const activeCalls = new Map();
 // ================== MESSAGE PERSISTENCE ==================
 const MESSAGES_FILE = path.join(__dirname, 'messages.json');
 
-// Save messages to file
-function saveMessages() {
+// Save messages to file (async - non-blocking)
+let isSaving = false;
+async function saveMessages() {
+  // Prevent concurrent saves
+  if (isSaving) return;
+  isSaving = true;
+
   try {
     const data = {};
     for (const [room, messages] of messageStore.entries()) {
@@ -288,12 +293,17 @@ function saveMessages() {
         seenBy: Array.from(msg.seenBy || [])
       }));
     }
-    fs.writeFileSync(MESSAGES_FILE, JSON.stringify(data, null, 2));
+
+    const { writeFile } = require('fs').promises;
+    await writeFile(MESSAGES_FILE, JSON.stringify(data, null, 2));
     console.log(`💾 Messages saved (${Object.keys(data).length} rooms)`);
   } catch (err) {
     console.error('Failed to save messages:', err.message);
+  } finally {
+    isSaving = false;
   }
 }
+
 
 // Load messages from file (sync - fallback)
 function loadMessages() {
@@ -876,6 +886,13 @@ io.on('connection', (socket) => {
     try {
       if (!targetId || !candidate) return;
 
+      // Log ICE candidate relay for debugging (only log type, not full candidate)
+      const candidateStr = candidate.candidate || '';
+      const candidateType = candidateStr.includes('typ host') ? 'host' :
+        candidateStr.includes('typ srflx') ? 'srflx' :
+          candidateStr.includes('typ relay') ? 'relay' : 'prflx';
+      console.log(`🧊 ICE candidate (${candidateType}) from ${socket.username || socket.id} → ${targetId}`);
+
       io.to(targetId).emit('iceCandidate', {
         candidate: candidate,
         from: socket.id
@@ -885,6 +902,7 @@ io.on('connection', (socket) => {
       console.error('ICE error:', err);
     }
   });
+
 
   socket.on('rejectCall', ({ targetId }) => {
     try {
@@ -1142,48 +1160,45 @@ app.get('/ping', (req, res) => {
 
 
 // ================== ICE SERVERS ENDPOINT ==================
+// Add ?forceRelay=true to force TURN-only mode for testing
 app.get('/api/ice-servers', (req, res) => {
-  // Return ICE server configuration with emphasis on TURN servers for restrictive networks
+  const forceRelay = req.query.forceRelay === 'true';
+
+  if (forceRelay) {
+    console.log('⚠️ Force relay mode enabled - using TURN servers only');
+  }
+
+  // Return ICE server configuration with multiple TURN server providers for reliability
   // Priority: TURNS (TLS/443) > TURN (TCP/443) > TURN (UDP) > STUN
   res.json({
     iceServers: [
-      // Google STUN servers (for simple NAT traversal)
+      // ===== STUN SERVERS (for direct connection when possible) =====
+      // Google STUN servers (most reliable)
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      // Twilio STUN
+      { urls: 'stun:global.stun.twilio.com:3478' },
 
-      // ===== METERED TURN SERVERS (Most Reliable) =====
-      // These work on most restrictive networks - prioritize TCP/443 and TURNS
+      // ===== TURN SERVERS (for NAT/firewall traversal) =====
+
+      // --- FreeTURN.net (Free, working as of 2024) ---
       {
         urls: [
-          'turn:a.relay.metered.ca:443',
-          'turn:a.relay.metered.ca:443?transport=tcp',
-          'turns:a.relay.metered.ca:443?transport=tcp'
+          'turn:freestun.net:3478',
+          'turn:freestun.net:5349',
+          'turns:freestun.net:5349'
         ],
-        username: 'e8dd65f92c95c6bf4bf1',
-        credential: 'DQpDQkhS3f/L4bsi'
-      },
-      {
-        urls: [
-          'turn:b.relay.metered.ca:443',
-          'turn:b.relay.metered.ca:443?transport=tcp',
-          'turns:b.relay.metered.ca:443?transport=tcp'
-        ],
-        username: 'e8dd65f92c95c6bf4bf1',
-        credential: 'DQpDQkhS3f/L4bsi'
-      },
-      // Additional metered servers on different ports
-      {
-        urls: [
-          'turn:a.relay.metered.ca:80',
-          'turn:a.relay.metered.ca:80?transport=tcp'
-        ],
-        username: 'e8dd65f92c95c6bf4bf1',
-        credential: 'DQpDQkhS3f/L4bsi'
+        username: 'free',
+        credential: 'free'
       },
 
-      // ===== OPEN RELAY SERVERS (Backup) =====
+      // --- Open Relay Project (Metered.ca free tier - 20GB/month) ---
       {
         urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
           'turn:openrelay.metered.ca:443',
           'turn:openrelay.metered.ca:443?transport=tcp',
           'turns:openrelay.metered.ca:443?transport=tcp'
@@ -1191,29 +1206,49 @@ app.get('/api/ice-servers', (req, res) => {
         username: 'openrelayproject',
         credential: 'openrelayproject'
       },
+
+      // --- Metered TURN Servers (reliable paid tier with free quota) ---
       {
         urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:80?transport=tcp'
+          'turn:a.relay.metered.ca:80',
+          'turn:a.relay.metered.ca:80?transport=tcp',
+          'turn:a.relay.metered.ca:443',
+          'turn:a.relay.metered.ca:443?transport=tcp',
+          'turns:a.relay.metered.ca:443?transport=tcp'
         ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
+        username: 'e8dd65f92c95c6bf4bf1',
+        credential: 'DQpDQkhS3f/L4bsi'
       },
 
-      // ===== ADDITIONAL FREE TURN SERVERS =====
-      // Xirsys free tier (TCP on 443 for restrictive networks)
+      // --- Second Metered Relay (different datacenter) ---
       {
         urls: [
-          'turn:turn.anyfirewall.com:443?transport=tcp'
+          'turn:b.relay.metered.ca:80',
+          'turn:b.relay.metered.ca:80?transport=tcp',
+          'turn:b.relay.metered.ca:443',
+          'turn:b.relay.metered.ca:443?transport=tcp',
+          'turns:b.relay.metered.ca:443?transport=tcp'
         ],
-        username: 'webrtc',
-        credential: 'webrtc'
+        username: 'e8dd65f92c95c6bf4bf1',
+        credential: 'DQpDQkhS3f/L4bsi'
+      },
+
+      // --- Numb STUN/TURN (Public free server) ---
+      {
+        urls: 'turn:numb.viagenie.ca',
+        username: 'webrtc@live.com',
+        credential: 'muazkh'
       }
     ],
-    // ICE transport policy - can be set to 'relay' to force TURN usage for testing
-    iceTransportPolicy: 'all'
+    // Force relay mode for testing TURN connectivity
+    // 'all' = try direct first, fallback to TURN  
+    // 'relay' = TURN only (use when debugging)
+    iceTransportPolicy: forceRelay ? 'relay' : 'all',
+    iceCandidatePoolSize: 4
   });
 });
+
+
 
 // ================== ERROR HANDLING ==================
 process.on('uncaughtException', (err) => {
