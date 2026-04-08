@@ -28,7 +28,7 @@ async function connectMongoDB() {
     await mongoClient.connect();
     mongoDb = mongoClient.db('privatechat');
     mongoConnected = true;
-    console.log(`✅ MongoDB connected for room "${SPECIAL_ROOM}"`);
+    console.log(`✅ MongoDB connected for all rooms (Primary: "${SPECIAL_ROOM}")`);
 
     // Create index for efficient queries
     await mongoDb.collection('messages').createIndex({ roomCode: 1, timestamp: 1 });
@@ -74,9 +74,8 @@ function normalizeRoomCode(roomCode) {
 
 // Check if room uses MongoDB
 function usesMongoDB(roomCode) {
-  const normalizedInput = normalizeRoomCode(roomCode);
-  const normalizedSpecial = normalizeRoomCode(SPECIAL_ROOM);
-  return mongoConnected && normalizedInput === normalizedSpecial;
+  // Enabled for all rooms to ensure persistence on platforms like Render
+  return mongoConnected;
 }
 
 // Save message to MongoDB (for special room only)
@@ -103,7 +102,7 @@ async function saveMessageToMongoDB(roomCode, message) {
   }
 }
 
-// ================== USER LAST SEEN PERSISTENCE (SPECIAL ROOM) ==================
+// ================== USER LAST SEEN PERSISTENCE (MONGODB) ==================
 // Save/update user last seen to MongoDB
 async function saveUserLastSeenToMongoDB(roomCode, username, lastSeen, online = false) {
   if (!mongoConnected || !usesMongoDB(roomCode)) return false;
@@ -309,7 +308,12 @@ async function saveMessages() {
 function loadMessages() {
   try {
     if (fs.existsSync(MESSAGES_FILE)) {
-      const data = JSON.parse(fs.readFileSync(MESSAGES_FILE, 'utf8'));
+      const fileContent = fs.readFileSync(MESSAGES_FILE, 'utf8');
+      if (!fileContent.trim()) {
+        console.log('📂 Message file is empty, starting with clean state');
+        return;
+      }
+      const data = JSON.parse(fileContent);
       for (const [room, messages] of Object.entries(data)) {
         const restoredMessages = messages.map(msg => ({
           ...msg,
@@ -331,6 +335,11 @@ async function loadMessagesAsync() {
     const { readFile } = require('fs').promises;
     if (fs.existsSync(MESSAGES_FILE)) {
       const fileContent = await readFile(MESSAGES_FILE, 'utf8');
+      if (!fileContent.trim()) {
+        console.log('📂 Message file is empty async, starting with clean state');
+        messagesLoaded = true;
+        return;
+      }
       const data = JSON.parse(fileContent);
       for (const [room, messages] of Object.entries(data)) {
         const restoredMessages = messages.map(msg => ({
@@ -1306,12 +1315,16 @@ const keepAlive = () => {
 };
 
 // ================== GRACEFUL SHUTDOWN ==================
-const gracefulShutdown = (signal) => {
+const gracefulShutdown = async (signal) => {
   console.log(`\n${signal} received. Starting graceful shutdown...`);
 
   // Save messages before shutdown
   console.log('💾 Saving messages before shutdown...');
-  saveMessages();
+  try {
+    await saveMessages();
+  } catch (err) {
+    console.error('❌ Error saving messages during shutdown:', err.message);
+  }
 
   // Stop accepting new connections
   server.close(() => {
